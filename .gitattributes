@@ -1,0 +1,2 @@
+.gemini/IMG_20250720_090212_edit_730440424190105.jpg filter=lfs diff=lfs merge=lfs -text
+.gemini/gemini-*.cast filter=lfs diff=lfs merge=lfs -text
