@@ -5,12 +5,21 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Crazy Matching</title>
+    <link rel="stylesheet" href="/src/style.css">
   </head>
   <body>
     <div id="app">
       <h1>Crazy Matching</h1>
-      <video id="video" autoplay playsinline></video>
+      <div id="container">
+        <video id="video" autoplay playsinline muted></video>
+        <canvas id="canvas"></canvas>
+      </div>
+      <div id="match-result"></div>
     </div>
     <script type="module" src="/src/main.ts"></script>
+    <script src="//cdn.jsdelivr.net/npm/eruda"></script>
+    <script>
+      eruda.init();
+    </script>
   </body>
 </html>

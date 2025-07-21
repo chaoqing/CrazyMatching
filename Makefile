@@ -25,7 +25,17 @@ build:
 
 # Serve the production build
 serve: build
-	npm run serve
+	npm run serve --host
+
+# Serve the production build over HTTPS using localtunnel
+# The default port for `vite preview` (used by `npm run serve`) is 4173.
+# If your server runs on a different port, adjust the localtunnel command accordingly.
+serve-https: serve localtunnel
+localtunnel: build
+	@echo "Waiting for local server to start with password $$(env https_proxy= curl -4 https://ipecho.net/plain) ..."
+	@sleep 1 # Give the server a few seconds to start
+	@echo "Starting localtunnel tunnel..."
+	@env https_proxy= $(NODE_MODULES)/.bin/lt --port 4173
 
 # Clean up the project
 clean:
