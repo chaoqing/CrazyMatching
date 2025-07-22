@@ -1,0 +1,7 @@
+tensorflow<2.16
+tensorflowjs
+opencv-python
+numpy<1.24
+matplotlib
+pandas
+lxml

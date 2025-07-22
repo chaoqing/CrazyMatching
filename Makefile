@@ -40,3 +40,49 @@ localtunnel: build
 # Clean up the project
 clean:
 	rm -rf dist $(NODE_MODULES)
+
+
+# --- Custom Model Training and Conversion --- #
+
+.PHONY: install-python-deps train convert model-clean
+
+# Define paths for model training and conversion
+MODEL_DIR := model
+TRAIN_SCRIPT := $(MODEL_DIR)/train.py
+PYTHON_REQUIREMENTS := $(MODEL_DIR)/requirements.txt
+
+SAVED_MODEL_PATH := $(MODEL_DIR)/saved_model/my_custom_object_detection_model
+TFJS_OUTPUT_DIR := src/assets/crazy_matching
+
+# TensorFlow.js converter output node names for your model
+# This should match the name of the output layer in your train.py (e.g., 'bbox_output')
+OUTPUT_NODE_NAMES := bbox_output
+
+# Add model-related targets to the 'all' target if you want them to run by default
+# all: install dev build train convert # Uncomment if you want 'make all' to also train and convert
+
+install-python-deps:
+	@echo "Installing Python dependencies..."
+	pip install -r $(PYTHON_REQUIREMENTS)
+
+train: install-python-deps
+	@echo "Training the custom model..."
+	python $(TRAIN_SCRIPT)
+
+$(SAVED_MODEL_PATH)/saved_model.pb : train
+
+convert: $(SAVED_MODEL_PATH)/saved_model.pb
+	@echo "Converting the trained model to TensorFlow.js format..."
+	# Ensure the output directory exists
+	mkdir -p $(TFJS_OUTPUT_DIR)
+	tensorflowjs_converter \
+		--input_format=tf_saved_model \
+		--output_node_names='$(OUTPUT_NODE_NAMES)' \
+		--output_format=tfjs_graph_model \
+		$(SAVED_MODEL_PATH) \
+		$(TFJS_OUTPUT_DIR)
+
+model-clean:
+	@echo "Cleaning up generated model files..."
+	rm -rf $(MODEL_DIR)/saved_model
+	rm -rf $(TFJS_OUTPUT_DIR)
