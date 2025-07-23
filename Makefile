@@ -10,6 +10,10 @@ all: install dev
 
 # Install dependencies
 install: $(NODE_MODULES)
+.PHONY: install-npm-deps
+install-npm-deps:
+	curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.1/install.sh | bash
+	export NVM_DIR="$$HOME/.nvm" && [ -s "$$NVM_DIR/nvm.sh" ] && \. "$$NVM_DIR/nvm.sh" && nvm install node && nvm use node
 
 $(NODE_MODULES): package-lock.json
 	npm install
@@ -63,7 +67,7 @@ OUTPUT_NODE_NAMES := bbox_output
 
 install-python-deps:
 	@echo "Installing Python dependencies..."
-	pip install -r $(PYTHON_REQUIREMENTS)
+	uv pip install -r $(PYTHON_REQUIREMENTS)
 
 train: install-python-deps
 	@echo "Training the custom model..."

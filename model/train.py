@@ -14,6 +14,7 @@
 # limitations under the License.
 # ==============================================================================
 
+from pathlib import Path
 import tensorflow as tf
 from tensorflow.keras.applications import MobileNetV3Small # Or MobileNetV3Large
 from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Input
@@ -93,7 +94,7 @@ def train_model():
 
     # 5. Save the trained model
     # Create the directory if it doesn't exist
-    save_path = 'saved_model/my_custom_object_detection_model'
+    save_path = Path(__file__).parent/'saved_model'/'my_custom_object_detection_model'
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     model.export(save_path) # Exports in TensorFlow SavedModel format
     print(f"\nModel training complete. Model saved to '{save_path}'.")
