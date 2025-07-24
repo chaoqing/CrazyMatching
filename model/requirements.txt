@@ -1,7 +1,5 @@
-tensorflow<2.16
+tensorflow>=2.16
 tensorflowjs
 opencv-python
-numpy<1.24
+numpy
 matplotlib
-pandas
-lxml

@@ -29,9 +29,9 @@ IMG_HEIGHT = 224
 IMG_WIDTH = 224
 IMG_CHANNELS = 3
 
-# Number of bounding box coordinates (x, y, width, height) for each box
-# We are predicting 2 bounding boxes, so 2 * 4 = 8 outputs
-NUM_BBOX_COORDS = 8 
+# Number of bounding box coordinates (x, y, width, height, rotation) for each box
+# We are predicting 2 bounding boxes, so 2 * 5 = 10 outputs
+NUM_BBOX_COORDS = 10 
 
 def create_custom_object_detection_model():
     """

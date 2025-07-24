@@ -19,10 +19,10 @@ import * as tf from '@tensorflow/tfjs';
 
 // Define a type for your custom detected objects, similar to cocoSsd.DetectedObject
 // Adjust properties based on your model's output and what you need for your game logic.
-export interface CustomDetectedObject {
-    bbox: [number, number, number, number]; // [x, y, width, height]
-    class: string; // The detected class name (e.g., 'cow', 'zebra')
-    score: number; // Confidence score
+// 新接口，兼容 raw 和 success 字段
+export interface ModelDetectResult {
+    raw: number[];
+    success: boolean;
 }
 
 export class Model {
@@ -35,12 +35,12 @@ export class Model {
         await tf.ready(); // Ensure TensorFlow.js backend is ready
         // Load your custom TensorFlow.js model from the public directory
         // The path should be relative to your web server's root.
-        const modelPath = './assets/crazy_matching/model.json'; // Path to your converted custom model
+        const modelPath = './models/crazy_matching/model.json'; // Path to your converted custom model
         this.model = await tf.loadGraphModel(modelPath);
         console.log('Custom model loaded from:', modelPath);
     }
 
-    async detect(input: HTMLVideoElement): Promise<CustomDetectedObject[]> {
+    async detect(input: HTMLVideoElement): Promise<ModelDetectResult[]> {
         if (!this.model) {
             console.log('Model not loaded.');
             return [];
@@ -50,7 +50,7 @@ export class Model {
         // Depending on your model's input requirements, you might need to resize,
         // normalize, or expand dimensions of the image tensor.
         // Example: Resize to model's expected input size (e.g., 300x300 for SSD)
-        const resized = tf.image.resizeBilinear(imgTensor, [300, 300]); // TODO: Adjust size to your model's input
+        const resized = tf.image.resizeBilinear(imgTensor, [224, 224]); // 修正为模型要求的输入尺寸
         const expanded = resized.expandDims(0); // Add batch dimension
         const normalized = expanded.div(255.0); // Normalize to [0, 1] if your model expects it
 
@@ -58,38 +58,101 @@ export class Model {
         // The output of your custom model will be raw tensors.
         // You need to know the names of your model's output tensors.
         // Common names for object detection are 'detection_boxes', 'detection_scores', 'detection_classes', 'num_detections'.
-        const predictions = this.model.execute(normalized) as tf.Tensor[]; // Cast to Tensor[]
-
-        // TODO: Process the raw tensor outputs to extract bounding boxes, scores, and classes.
-        // The exact processing depends on your model's output structure.
-        // This is a generic example and will likely need adjustment.
-
-        const bboxPrediction = predictions[0].squeeze(); // Assuming the model outputs a single tensor of shape [8]
+        const predictions = this.model.execute(normalized);
+        let bboxPrediction: tf.Tensor;
+        if (Array.isArray(predictions)) {
+            if (!predictions[0]) {
+                console.error('模型推理结果为空或格式不正确:', predictions);
+                tf.dispose([imgTensor, resized, expanded, normalized]);
+                return [];
+            }
+            bboxPrediction = predictions[0].squeeze();
+        } else if (predictions instanceof tf.Tensor) {
+            bboxPrediction = predictions.squeeze();
+        } else {
+            console.error('模型推理结果类型未知:', predictions);
+            tf.dispose([imgTensor, resized, expanded, normalized]);
+            return [];
+        }
         const bboxCoords = bboxPrediction.arraySync() as number[];
-
-        const detectedObjects: CustomDetectedObject[] = [];
         const width = input.videoWidth;
         const height = input.videoHeight;
+        // 新模型输出格式：[cx1, cy1, w1, h1, r1, dx, dy, w2, h2, r2]
+        let success = false;
+        const raw = bboxCoords;
+        if (bboxCoords.length === 10) {
+            const [cx1, cy1, w1, h1, r1, dx, dy, w2, h2, r2] = bboxCoords;
+            const cx2 = cx1 + dx;
+            const cy2 = cy1 + dy;
+            // 检查参数范围
+            const valid1 = cx1 >= 0 && cx1 <= width && cy1 >= 0 && cy1 <= height && w1 > 0 && w1 <= width && h1 > 0 && h1 <= height;
+            const valid2 = cx2 >= 0 && cx2 <= width && cy2 >= 0 && cy2 <= height && w2 > 0 && w2 <= width && h2 > 0 && h2 <= height;
+            const rot1ok = r1 >= -Math.PI && r1 <= Math.PI;
+            const rot2ok = r2 >= -Math.PI && r2 <= Math.PI;
+            const box1 = getRectCorners(cx1, cy1, w1, h1, r1);
+            const box2 = getRectCorners(cx2, cy2, w2, h2, r2);
+            const notOverlap = !isRectOverlap(box1, box2);
+            success = valid1 && valid2 && rot1ok && rot2ok && notOverlap;
+        }
+        if (Array.isArray(predictions)) {
+            tf.dispose([imgTensor, resized, expanded, normalized, ...predictions, bboxPrediction]);
+        } else {
+            tf.dispose([imgTensor, resized, expanded, normalized, predictions as tf.Tensor, bboxPrediction]);
+        }
+        // 返回 raw 和 success 字段，供前端判断和绘制
+        return [{ raw, success }];
+        // 获取旋转矩形四个顶点
+        function getRectCorners(cx: number, cy: number, w: number, h: number, angle: number): Array<{x: number, y: number}> {
+            const hw = w / 2, hh = h / 2;
+            const corners = [
+                {x: -hw, y: -hh},
+                {x: hw, y: -hh},
+                {x: hw, y: hh},
+                {x: -hw, y: hh}
+            ];
+            return corners.map(pt => {
+                const x = pt.x * Math.cos(angle) - pt.y * Math.sin(angle) + cx;
+                const y = pt.x * Math.sin(angle) + pt.y * Math.cos(angle) + cy;
+                return {x, y};
+            });
+        }
 
-        // Process the first bounding box
-        const [x1_norm, y1_norm, w1_norm, h1_norm] = bboxCoords.slice(0, 4);
-        detectedObjects.push({
-            bbox: [x1_norm * width, y1_norm * height, w1_norm * width, h1_norm * height],
-            class: this.classNames[0], // Assuming first box is for class 0
-            score: 1.0 // No score predicted by this model, assume 1.0 for now
-        });
+        // 判断两个旋转矩形是否重叠（分离轴定理，近似实现）
+        function isRectOverlap(a: Array<{x: number, y: number}>, b: Array<{x: number, y: number}>): boolean {
+            // 检查所有轴
+            const axes = getAxes(a).concat(getAxes(b));
+            for (const axis of axes) {
+                const [minA, maxA] = projectPolygon(a, axis);
+                const [minB, maxB] = projectPolygon(b, axis);
+                if (maxA < minB || maxB < minA) {
+                    return false; // 存在分离轴
+                }
+            }
+            return true; // 所有轴都重叠
+        }
 
-        // Process the second bounding box
-        const [x2_norm, y2_norm, w2_norm, h2_norm] = bboxCoords.slice(4, 8);
-        detectedObjects.push({
-            bbox: [x2_norm * width, y2_norm * height, w2_norm * width, h2_norm * height],
-            class: this.classNames[1], // Assuming second box is for class 1
-            score: 1.0 // No score predicted by this model, assume 1.0 for now
-        });
+        function getAxes(corners: Array<{x: number, y: number}>): Array<{x: number, y: number}> {
+            const axes = [];
+            for (let i = 0; i < corners.length; i++) {
+                const p1 = corners[i];
+                const p2 = corners[(i + 1) % corners.length];
+                const edge = {x: p2.x - p1.x, y: p2.y - p1.y};
+                // 垂直向量
+                axes.push({x: -edge.y, y: edge.x});
+            }
+            return axes;
+        }
 
-        // Dispose of tensors to free up memory
-        tf.dispose([imgTensor, resized, expanded, normalized, ...predictions, bboxPrediction]);
-
-        return detectedObjects;
+        function projectPolygon(corners: Array<{x: number, y: number}>, axis: {x: number, y: number}): [number, number] {
+            const norm = Math.sqrt(axis.x * axis.x + axis.y * axis.y);
+            const ax = axis.x / norm, ay = axis.y / norm;
+            let min = Infinity, max = -Infinity;
+            for (const pt of corners) {
+                const proj = pt.x * ax + pt.y * ay;
+                min = Math.min(min, proj);
+                max = Math.max(max, proj);
+            }
+            return [min, max];
+        }
     }
 }

@@ -56,7 +56,7 @@ TRAIN_SCRIPT := $(MODEL_DIR)/train.py
 PYTHON_REQUIREMENTS := $(MODEL_DIR)/requirements.txt
 
 SAVED_MODEL_PATH := $(MODEL_DIR)/saved_model/my_custom_object_detection_model
-TFJS_OUTPUT_DIR := src/assets/crazy_matching
+TFJS_OUTPUT_DIR := public/models/crazy_matching
 
 # TensorFlow.js converter output node names for your model
 # This should match the name of the output layer in your train.py (e.g., 'bbox_output')
@@ -67,11 +67,13 @@ OUTPUT_NODE_NAMES := bbox_output
 
 install-python-deps:
 	@echo "Installing Python dependencies..."
+	@command -v uv >/dev/null 2>&1 || python -m pip install --user uv
+	@test -d .venv || uv venv
 	uv pip install -r $(PYTHON_REQUIREMENTS)
 
 train: install-python-deps
 	@echo "Training the custom model..."
-	python $(TRAIN_SCRIPT)
+	uv run python $(TRAIN_SCRIPT)
 
 $(SAVED_MODEL_PATH)/saved_model.pb : train
 
@@ -79,7 +81,7 @@ convert: $(SAVED_MODEL_PATH)/saved_model.pb
 	@echo "Converting the trained model to TensorFlow.js format..."
 	# Ensure the output directory exists
 	mkdir -p $(TFJS_OUTPUT_DIR)
-	tensorflowjs_converter \
+	uv run tensorflowjs_converter \
 		--input_format=tf_saved_model \
 		--output_node_names='$(OUTPUT_NODE_NAMES)' \
 		--output_format=tfjs_graph_model \

@@ -23,12 +23,20 @@ class Main {
     private canvas: HTMLCanvasElement;
     private model: Model;
     private matchResult: HTMLDivElement;
+    private useAltAlgo: boolean = false;
 
     constructor() {
         this.video = document.getElementById('video') as HTMLVideoElement;
         this.canvas = document.getElementById('canvas') as HTMLCanvasElement;
         this.matchResult = document.getElementById('match-result') as HTMLDivElement;
         this.model = new Model();
+        const toggleBtn = document.getElementById('toggle-algo') as HTMLButtonElement;
+        if (toggleBtn) {
+            toggleBtn.addEventListener('click', () => {
+                this.useAltAlgo = !this.useAltAlgo;
+                toggleBtn.textContent = this.useAltAlgo ? '切换到默认算法' : '切换检测算法';
+            });
+        }
     }
 
     async setupCamera() {
@@ -50,43 +58,58 @@ class Main {
     }
 
     async detect() {
-        const predictions = await this.model.detect(this.video);
+        let predictions;
+        if (this.useAltAlgo) {
+            predictions = await this.altDetect();
+        } else {
+            predictions = await this.model.detect(this.video);
+        }
         const ctx = this.canvas.getContext('2d');
         if (!ctx) {
             return;
         }
         ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
-        const detectedObjects = new Set();
-        for (const prediction of predictions) {
-            const [x, y, width, height] = prediction.bbox;
-            ctx.strokeStyle = '#00FFFF';
-            ctx.lineWidth = 4;
-            ctx.strokeRect(x, y, width, height);
-            ctx.fillStyle = '#00FFFF';
-            const text = `${prediction.class} (${Math.round(prediction.score * 100)}%)`;
-            ctx.fillText(text, x, y > 10 ? y - 5 : 10);
-            detectedObjects.add(prediction.class);
+        // 直接使用模型 detect 返回的 success 字段
+        if (Array.isArray(predictions) && predictions.length === 1 && typeof predictions[0].success === 'boolean') {
+            if (predictions[0].success) {
+                this.matchResult.innerText = `Match found`;
+                console.info('Match found:', predictions[0].raw);
+            } else {
+                this.matchResult.innerText = '';
+                console.info('Match not found:', predictions[0].raw);
+            }
         }
 
-        // For now, we just check if we have detected more than one object of the same class
-        const duplicates = this.findDuplicates(predictions);
-        if (duplicates.length > 0) {
-            this.matchResult.innerText = `Match found: ${duplicates.join(', ')}`;
-        } else {
-            this.matchResult.innerText = '';
+        // 新模型输出格式：[cx1, cy1, w1, h1, r1, dx, dy, w2, h2, r2]
+        if (Array.isArray(predictions) && predictions.length === 1 && Array.isArray(predictions[0].raw)) {
+            const arr = predictions[0].raw;
+            if (arr.length === 10) {
+                const [cx1, cy1, w1, h1, r1, dx, dy, w2, h2, r2] = arr;
+                // 第一个框
+                drawRotatedRect(ctx, cx1, cy1, w1, h1, r1, '#00FFFF');
+                ctx.fillText('1', cx1, cy1);
+                // 第二个框
+                const cx2 = cx1 + dx;
+                const cy2 = cy1 + dy;
+                drawRotatedRect(ctx, cx2, cy2, w2, h2, r2, '#FF00FF');
+                ctx.fillText('2', cx2, cy2);
+            }
         }
+// 绘制旋转矩形
+function drawRotatedRect(ctx: CanvasRenderingContext2D, cx: number, cy: number, w: number, h: number, angle: number, color: string) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angle);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 4;
+    ctx.strokeRect(-w/2, -h/2, w, h);
+    ctx.restore();
+}
+
 
 
         requestAnimationFrame(() => this.detect());
-    }
-
-    findDuplicates(predictions: any[]): string[] {
-        const counts: Record<string, number> = {};
-        for (const prediction of predictions) {
-            counts[prediction.class] = (counts[prediction.class] || 0) + 1;
-        }
-        return Object.keys(counts).filter(key => counts[key] > 1);
     }
 
     async run() {
@@ -111,6 +134,13 @@ class Main {
             return;
         }
         this.detect();
+    }
+
+    // 示例：备用检测算法（可自定义实现）
+    async altDetect(): Promise<any[]> {
+        // 这里可以实现另一种检测逻辑，当前仅返回空数组
+        // 你可以在此处集成其他模型或算法
+        return [];
     }
 }
 
