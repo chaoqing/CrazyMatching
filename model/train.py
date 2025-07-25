@@ -16,11 +16,12 @@
 
 from pathlib import Path
 import tensorflow as tf
-from tensorflow.keras.applications import MobileNetV3Small # Or MobileNetV3Large
+from tensorflow.keras.applications import MobileNetV3Small
 from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Input
 from tensorflow.keras.models import Model
 import numpy as np
 import os
+from sklearn.model_selection import train_test_split
 
 # Define the input image size for the model
 # MobileNetV3 typically expects input sizes like (224, 224), (160, 160), etc.
@@ -32,6 +33,32 @@ IMG_CHANNELS = 3
 # Number of bounding box coordinates (x, y, width, height, rotation) for each box
 # We are predicting 2 bounding boxes, so 2 * 5 = 10 outputs
 NUM_BBOX_COORDS = 10 
+
+def load_and_preprocess_data(data_dir):
+    """
+    Loads pre-generated NumPy data and splits it into training, validation, and test sets.
+    """
+    X_path = data_dir / 'X_train.npy'
+    y_path = data_dir / 'y_train.npy'
+
+    if not X_path.exists() or not y_path.exists():
+        raise FileNotFoundError(
+            f"Training data not found. Please run `model/data/simulate_data.py` to generate "
+            f"'{X_path}' and '{y_path}' first."
+        )
+
+    print(f"Loading data from {X_path} and {y_path}...")
+    X = np.load(X_path)
+    y = np.load(y_path)
+    
+    # The data from simulate_data is already resized and normalized.
+    # We just need to split it.
+    
+    # Split data into training (80%), validation (10%), and test (10%) sets
+    X_train, X_temp, y_train, y_temp = train_test_split(X, y, test_size=0.2, random_state=42)
+    X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.5, random_state=42)
+    
+    return (X_train, y_train), (X_val, y_val), (X_test, y_test)
 
 def create_custom_object_detection_model():
     """
@@ -60,7 +87,6 @@ def create_custom_object_detection_model():
     bbox_output = Dense(NUM_BBOX_COORDS, activation='linear', name='bbox_output')(x)
 
     model = Model(inputs=input_tensor, outputs=bbox_output, name='custom_object_detector')
-
     return model
 
 def train_model():
@@ -73,31 +99,42 @@ def train_model():
     # 2. Compile the model
     # For bounding box regression, Mean Squared Error (MSE) or Huber loss are common.
     # Adam optimizer is a good general-purpose choice.
-    model.compile(optimizer='adam', loss='mse') # Using MSE for bounding box regression
+    model.compile(optimizer='adam', loss='mse', metrics=['mae'])
 
-    # TODO: 3. Prepare your dataset
-    # You will need to load your annotated images and their corresponding bounding box labels.
-    # The labels for each image should be a numpy array of shape (8,) representing
-    # [x1, y1, w1, h1, x2, y2, w2, h2] for the two target bounding boxes.
-    # Ensure your image data is preprocessed (e.g., resized to IMG_HEIGHT, IMG_WIDTH and normalized).
+    # 3. Prepare dataset
+    data_dir = Path(__file__).parent / 'data' / 'training_data'
+    (X_train, y_train), (X_val, y_val), (X_test, y_test) = load_and_preprocess_data(data_dir)
     
-    # Example placeholder for dummy data (REPLACE WITH YOUR ACTUAL DATA LOADING)
-    num_samples = 100
-    dummy_images = np.random.rand(num_samples, IMG_HEIGHT, IMG_WIDTH, IMG_CHANNELS).astype(np.float32)
-    # Dummy bounding box labels (random values between 0 and 1 for normalized coordinates)
-    dummy_bboxes = np.random.rand(num_samples, NUM_BBOX_COORDS).astype(np.float32)
+    print(f"\nDataset loaded and split:")
+    print(f"Training samples: {len(X_train)}")
+    print(f"Validation samples: {len(X_val)}")
+    print(f"Test samples: {len(X_test)}")
 
-    # TODO: 4. Train the model
-    # Adjust epochs, batch_size, and add validation_data as needed.
-    print("\nTraining the model with dummy data (REPLACE WITH YOUR ACTUAL DATA)...")
-    model.fit(dummy_images, dummy_bboxes, epochs=10, batch_size=32)
+    # 4. Train the model
+    print("\nTraining the model with real data...")
+    history = model.fit(X_train, y_train, 
+                        epochs=100,  # Increased epochs for better convergence
+                        batch_size=50, # Smaller batch size for potentially better training
+                        validation_data=(X_val, y_val),
+                        callbacks=[tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)])
 
-    # 5. Save the trained model
-    # Create the directory if it doesn't exist
+    # 5. Evaluate the model on the test set
+    print("\nEvaluating model on the test set...")
+    test_loss, test_mae = model.evaluate(X_test, y_test)
+    print(f"Test Loss: {test_loss:.4f}")
+    print(f"Test MAE: {test_mae:.4f}")
+
+    # 6. Save the trained model
     save_path = Path(__file__).parent/'saved_model'/'my_custom_object_detection_model'
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    model.export(save_path) # Exports in TensorFlow SavedModel format
+    os.makedirs(save_path, exist_ok=True)
+    model.export(str(save_path))
     print(f"\nModel training complete. Model saved to '{save_path}'.")
 
 if __name__ == '__main__':
-    train_model()
+    # Add scikit-learn to requirements if it's not there
+    try:
+        import sklearn
+    except ImportError:
+        print("scikit-learn not found. Please install it using: pip install scikit-learn")
+    else:
+        train_model()

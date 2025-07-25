@@ -20,7 +20,7 @@ $(NODE_MODULES): package-lock.json
 	touch $(NODE_MODULES)
 
 # Start the development server
-dev:
+dev: $(NODE_MODULES)
 	npm run dev
 
 # Build the project for production
@@ -31,15 +31,12 @@ build:
 serve: build
 	npm run serve --host
 
-# Serve the production build over HTTPS using localtunnel
-# The default port for `vite preview` (used by `npm run serve`) is 4173.
-# If your server runs on a different port, adjust the localtunnel command accordingly.
-serve-https: serve localtunnel
-localtunnel: build
-	@echo "Waiting for local server to start with password $$(env https_proxy= curl -4 https://ipecho.net/plain) ..."
+dev-https: dev localtunnel
+localtunnel:
+	@echo "Waiting for local server to start with password $$(env https_proxy= curl -s -4 https://ipecho.net/plain) ..."
 	@sleep 1 # Give the server a few seconds to start
 	@echo "Starting localtunnel tunnel..."
-	@env https_proxy= $(NODE_MODULES)/.bin/lt --port 4173
+	@env https_proxy= $(NODE_MODULES)/.bin/lt --port 5173
 
 # Clean up the project
 clean:
@@ -75,6 +72,10 @@ train: install-python-deps
 	@echo "Training the custom model..."
 	uv run python $(TRAIN_SCRIPT)
 
+simulate:
+	@rm -rf $(MODEL_DIR)/data/extracted_animals
+	uv run python $(MODEL_DIR)/data/simulate_data.py
+
 $(SAVED_MODEL_PATH)/saved_model.pb : train
 
 convert: $(SAVED_MODEL_PATH)/saved_model.pb
@@ -92,3 +93,10 @@ model-clean:
 	@echo "Cleaning up generated model files..."
 	rm -rf $(MODEL_DIR)/saved_model
 	rm -rf $(TFJS_OUTPUT_DIR)
+
+.PHONY: gemini
+gemini:
+	@command -v asciinema >/dev/null 2>&1 || { echo "asciinema is not installed. Installing..."; sudo apt install -y asciinema; }
+	@command -v gemini >/dev/null 2>&1 || { echo "gemini is not installed. Installing..."; npm install -g @google/gemini-cli; }
+	@echo "Running Gemini model training and conversion..."
+	@exec asciinema rec --overwrite --command "gemini" "./.gemini/gemini-$$(date).cast"

@@ -29,7 +29,6 @@ export class Model {
     // Use tf.GraphModel for custom models
     private model: tf.GraphModel | null = null;
     // Define your class names in the order they were trained
-    private classNames: string[] = ['cow', 'zebra', 'star']; // TODO: Update with your actual class names
 
     async load() {
         await tf.ready(); // Ensure TensorFlow.js backend is ready
@@ -77,13 +76,11 @@ export class Model {
         const bboxCoords = bboxPrediction.arraySync() as number[];
         const width = input.videoWidth;
         const height = input.videoHeight;
-        // 新模型输出格式：[cx1, cy1, w1, h1, r1, dx, dy, w2, h2, r2]
+        // 新模型输出格式：[cx1, cy1, w1, h1, r1, cx2, cy2, w2, h2, r2]
         let success = false;
         const raw = bboxCoords;
         if (bboxCoords.length === 10) {
-            const [cx1, cy1, w1, h1, r1, dx, dy, w2, h2, r2] = bboxCoords;
-            const cx2 = cx1 + dx;
-            const cy2 = cy1 + dy;
+            const [cx1, cy1, w1, h1, r1, cx2, cy2, w2, h2, r2] = bboxCoords;
             // 检查参数范围
             const valid1 = cx1 >= 0 && cx1 <= width && cy1 >= 0 && cy1 <= height && w1 > 0 && w1 <= width && h1 > 0 && h1 <= height;
             const valid2 = cx2 >= 0 && cx2 <= width && cy2 >= 0 && cy2 <= height && w2 > 0 && w2 <= width && h2 > 0 && h2 <= height;

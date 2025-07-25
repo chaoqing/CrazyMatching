@@ -81,17 +81,15 @@ class Main {
             }
         }
 
-        // 新模型输出格式：[cx1, cy1, w1, h1, r1, dx, dy, w2, h2, r2]
+        // 新模型输出格式：[cx1, cy1, w1, h1, r1, cx2, cy2, w2, h2, r2]
         if (Array.isArray(predictions) && predictions.length === 1 && Array.isArray(predictions[0].raw)) {
             const arr = predictions[0].raw;
             if (arr.length === 10) {
-                const [cx1, cy1, w1, h1, r1, dx, dy, w2, h2, r2] = arr;
+                const [cx1, cy1, w1, h1, r1, cx2, cy2, w2, h2, r2] = arr;
                 // 第一个框
                 drawRotatedRect(ctx, cx1, cy1, w1, h1, r1, '#00FFFF');
                 ctx.fillText('1', cx1, cy1);
                 // 第二个框
-                const cx2 = cx1 + dx;
-                const cy2 = cy1 + dy;
                 drawRotatedRect(ctx, cx2, cy2, w2, h2, r2, '#FF00FF');
                 ctx.fillText('2', cx2, cy2);
             }
