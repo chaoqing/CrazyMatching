@@ -84,6 +84,8 @@ def create_custom_object_detection_model():
     # Simple feed-forward network for bounding box prediction
     # The output layer has NUM_BBOX_COORDS (8) units for 2 bounding boxes (x,y,w,h each)
     # Use a linear activation for regression tasks like bounding box prediction.
+    x = Dense(NUM_BBOX_COORDS*4, activation='relu')(x)
+    x = Dense(NUM_BBOX_COORDS*2, activation='relu')(x)
     bbox_output = Dense(NUM_BBOX_COORDS, activation='linear', name='bbox_output')(x)
 
     model = Model(inputs=input_tensor, outputs=bbox_output, name='custom_object_detector')
@@ -99,7 +101,7 @@ def train_model():
     # 2. Compile the model
     # For bounding box regression, Mean Squared Error (MSE) or Huber loss are common.
     # Adam optimizer is a good general-purpose choice.
-    model.compile(optimizer='adam', loss='mse', metrics=['mae'])
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=0.0001), loss='mse', metrics=['mae'])
 
     # 3. Prepare dataset
     data_dir = Path(__file__).parent / 'data' / 'training_data'
@@ -114,9 +116,9 @@ def train_model():
     print("\nTraining the model with real data...")
     history = model.fit(X_train, y_train, 
                         epochs=100,  # Increased epochs for better convergence
-                        batch_size=50, # Smaller batch size for potentially better training
+                        batch_size=100, # Smaller batch size for potentially better training
                         validation_data=(X_val, y_val),
-                        callbacks=[tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)])
+                        callbacks=[tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=20, restore_best_weights=True)])
 
     # 5. Evaluate the model on the test set
     print("\nEvaluating model on the test set...")

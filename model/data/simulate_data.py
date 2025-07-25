@@ -400,8 +400,8 @@ def generate_training_data(num_samples=100):
         if len(duplicated_rects) == 2:
             r1, r2 = duplicated_rects[0], duplicated_rects[1]
             label = [
-                r1['center_x']/bg_w, r1['center_y']/bg_h, r1['w']/bg_w, r1['h']/bg_h, r1['rotation'],
-                r2['center_x']/bg_w, r2['center_y']/bg_h, r2['w']/bg_w, r2['h']/bg_h, r2['rotation']
+                r1['center_x']/bg_w, r1['center_y']/bg_h, r1['w']/bg_w, r1['h']/bg_h, (r1['rotation'] + np.pi) / (2 * np.pi),
+                r2['center_x']/bg_w, r2['center_y']/bg_h, r2['w']/bg_w, r2['h']/bg_h, (r2['rotation'] + np.pi) / (2 * np.pi)
             ]
             
             yield sample_image, label
@@ -467,10 +467,10 @@ def create_dataset(output_dir, num_samples=100, image_size=(224, 224), save_raw=
     print(f"Training data saved as '{X_train_path}' and '{y_train_path}'")
 
 
-def debug_training_data(image_path, label_path, output_path):
+def debug_training_data(image_path, label_path, output_path, image_size=(224, 224)):
     """
     Reads a training sample and its label, and draws the bounding boxes on the image
-    to visually verify the data.
+    to visually verify the data. Also saves a resized version for inspection.
     """
     # Load the image
     image = cv2.imread(str(image_path))
@@ -483,6 +483,7 @@ def debug_training_data(image_path, label_path, output_path):
         label_data = json.load(f)['label']
 
     img_h, img_w, _ = image.shape
+    debug_image = image.copy()
 
     # Extract the two bounding box details
     box1_data = label_data[0:5]
@@ -494,7 +495,9 @@ def debug_training_data(image_path, label_path, output_path):
         center_y = box_data[1] * img_h
         w = box_data[2] * img_w
         h = box_data[3] * img_h
-        rotation_rad = box_data[4]
+        
+        # Denormalize rotation from [0, 1] back to [-pi, pi]
+        rotation_rad = (box_data[4] * 2 * np.pi) - np.pi
         rotation_deg = np.degrees(rotation_rad)
 
         # Get the 4 corners of the rotated rectangle
@@ -503,12 +506,19 @@ def debug_training_data(image_path, label_path, output_path):
 
         # Draw the rectangle
         color = (0, 255, 0) if i == 0 else (0, 0, 255) # Green for first, Red for second
-        cv2.drawContours(image, [box_points], 0, color, 2)
+        cv2.drawContours(debug_image, [box_points], 0, color, 2)
 
-    # Save the debug image
+    # Save the original-sized debug image
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    cv2.imwrite(str(output_path), image)
+    cv2.imwrite(str(output_path), debug_image)
     print(f"Saved debug image with bounding boxes to: {output_path}")
+
+    # Save the resized debug image to see what the model sees
+    resized_debug_image = cv2.resize(debug_image, image_size)
+    p = Path(output_path)
+    resized_output_path = p.parent / f"{p.stem}_resized{p.suffix}"
+    cv2.imwrite(str(resized_output_path), resized_debug_image)
+    print(f"Saved RESIZED debug image to: {resized_output_path}")
 
 
 if __name__ == '__main__':
@@ -531,7 +541,7 @@ if __name__ == '__main__':
     # This part uses the extracted assets to create training samples.
     print("--- Running Step 2: Generating Training Data ---")
     output_directory_sim = Path(__file__).parent / 'training_data'
-    create_dataset(output_directory_sim, num_samples=1000, save_raw=1==0) # Generate 50 samples for testing
+    create_dataset(output_directory_sim, num_samples=2000, save_raw=1==0) # Generate 50 samples for testing
     print("\n--- Finished Step 2 ---")
 
 

@@ -78,7 +78,7 @@ simulate:
 
 $(SAVED_MODEL_PATH)/saved_model.pb : train
 
-convert: $(SAVED_MODEL_PATH)/saved_model.pb
+convert: # $(SAVED_MODEL_PATH)/saved_model.pb
 	@echo "Converting the trained model to TensorFlow.js format..."
 	# Ensure the output directory exists
 	mkdir -p $(TFJS_OUTPUT_DIR)
