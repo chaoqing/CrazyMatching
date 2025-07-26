@@ -8,19 +8,25 @@
     <link rel="stylesheet" href="/src/style.css">
   </head>
   <body>
-    <div id="app">
+    <video id="video" autoplay playsinline muted></video>
+    <canvas id="canvas"></canvas>
+
+    <div id="top-controls">
       <h1>Crazy Matching</h1>
-      <div id="container">
-        <video id="video" autoplay playsinline muted></video>
-        <canvas id="canvas"></canvas>
-      </div>
-      <button id="toggle-algo" style="margin-top:20px;">切换检测算法</button>
+      <button id="toggle-algo">Start</button>
+    </div>
+
+    <div id="left-controls">
+      <input type="range" id="zoom" min="1" max="1" step="0.1" disabled>
+    </div>
+
+    <div id="right-controls">
+    </div>
+
+    <div id="bottom-container">
       <div id="match-result"></div>
     </div>
+    
     <script type="module" src="/src/main.ts"></script>
-    <script src="//cdn.jsdelivr.net/npm/eruda"></script>
-    <script>
-      eruda.init();
-    </script>
   </body>
 </html>

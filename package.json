@@ -13,13 +13,13 @@
   "license": "ISC",
   "description": "",
   "devDependencies": {
+    "eruda": "^3.4.3",
     "localtunnel": "^2.0.2",
     "typescript": "^5.8.3",
     "vite": "^6.3.5"
   },
   "dependencies": {
     "@tensorflow-models/coco-ssd": "^2.2.3",
-    "@tensorflow/tfjs": "^4.2.0",
-    "@tensorflow/tfjs-backend-wasm": "^4.22.0"
+    "@tensorflow/tfjs": "^4.2.0"
   }
 }

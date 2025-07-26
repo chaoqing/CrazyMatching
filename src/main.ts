@@ -1,19 +1,8 @@
-/**
- * @license
- * Copyright 2025 Nicolas Wang. All Rights Reserved.
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- * =============================================================================
- */
+if (import.meta.env.DEV) {
+  import('eruda').then((eruda) => {
+    eruda.default.init();
+  });
+}
 
 import './style.css';
 import { Model } from './model';
@@ -22,79 +11,174 @@ class Main {
     private video: HTMLVideoElement;
     private canvas: HTMLCanvasElement;
     private model: Model;
-    private matchResult: HTMLDivElement;
-    private useAltAlgo: boolean = false;
+    private isDetecting: boolean = false;
+    private videoDevices: MediaDeviceInfo[] = [];
+    private currentStream: MediaStream | null = null;
 
     constructor() {
         this.video = document.getElementById('video') as HTMLVideoElement;
         this.canvas = document.getElementById('canvas') as HTMLCanvasElement;
-        this.matchResult = document.getElementById('match-result') as HTMLDivElement;
         this.model = new Model();
         const toggleBtn = document.getElementById('toggle-algo') as HTMLButtonElement;
         if (toggleBtn) {
             toggleBtn.addEventListener('click', () => {
-                this.useAltAlgo = !this.useAltAlgo;
-                toggleBtn.textContent = this.useAltAlgo ? '切换到默认算法' : '切换检测算法';
+                this.isDetecting = !this.isDetecting;
+                toggleBtn.textContent = this.isDetecting ? 'Stop' : 'Start';
+                if (this.isDetecting) {
+                    this.detect();
+                } else {
+                    const ctx = this.canvas.getContext('2d');
+                    if (ctx) {
+                        ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                    }
+                }
             });
         }
     }
 
+    async run() {
+        await this.model.load();
+        await this.setupCamera();
+    }
+
     async setupCamera() {
+        // 1. Enumerate devices
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        this.videoDevices = devices.filter(device => device.kind === 'videoinput');
+        this.videoDevices.sort((a, b) => a.label.localeCompare(b.label));
+        console.log('Available video devices:', this.videoDevices.map(d => ({ label: d.label, deviceId: d.deviceId })));
+
+        // 2. Determine the best initial camera
+        const wideCamera = this.videoDevices.find(d => d.label.toLowerCase().includes('wide'));
+        const initialDeviceId = wideCamera ? wideCamera.deviceId : (this.videoDevices.length > 0 ? this.videoDevices[0].deviceId : undefined);
+        console.log('Initial camera selected:', initialDeviceId);
+
+        // 3. Start the stream with the chosen camera
+        if (initialDeviceId) {
+            await this.startStream(initialDeviceId);
+        } else {
+            // Fallback if no specific device is found
+            await this.startStream();
+        }
+
+        // 4. Setup UI after stream is running
+        this.setupCameraSelectorUI();
+    }
+
+    setupCameraSelectorUI() {
+        const cameraSelector = document.getElementById('right-controls');
+        if (!cameraSelector || this.videoDevices.length <= 1) {
+            return;
+        }
+
+        cameraSelector.innerHTML = '';
+        this.videoDevices.forEach(device => {
+            const button = document.createElement('button');
+            button.classList.add('camera-select-button');
+            button.dataset.deviceId = device.deviceId;
+            button.title = device.label;
+            button.addEventListener('click', () => this.startStream(device.deviceId));
+            cameraSelector.appendChild(button);
+        });
+        cameraSelector.style.display = 'flex';
+        
+        const currentDeviceId = this.currentStream?.getVideoTracks()[0].getSettings().deviceId;
+        if(currentDeviceId) {
+            this.updateActiveButton(currentDeviceId);
+        }
+    }
+
+    async startStream(deviceId?: string) {
+        if (this.currentStream) {
+            this.currentStream.getTracks().forEach(track => track.stop());
+        }
+
+        const videoConstraints: MediaTrackConstraints = deviceId 
+            ? { deviceId: { exact: deviceId } } 
+            : { facingMode: 'environment' };
+
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({
-                video: { facingMode: 'environment' },
-                audio: false,
+            this.currentStream = await navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false });
+            this.video.srcObject = this.currentStream;
+
+            await new Promise(resolve => {
+                this.video.onloadedmetadata = () => resolve(true);
             });
-            this.video.srcObject = stream;
-            return new Promise((resolve) => {
-                this.video.onloadedmetadata = () => {
-                    resolve(this.video);
-                };
-            });
+
+            await this.video.play();
+
+            this.canvas.width = this.video.videoWidth;
+            this.canvas.height = this.video.videoHeight;
+            
+            const currentDeviceId = this.currentStream.getVideoTracks()[0].getSettings().deviceId;
+            if (currentDeviceId) {
+                this.updateActiveButton(currentDeviceId);
+            }
+            this.setupZoomSlider();
+
         } catch (error) {
-            console.error('Error in getUserMedia:', error);
-            throw error; // Re-throw the error to be caught by the run() method
+            console.error(`Error starting stream for device ${deviceId}:`, error);
+        }
+    }
+
+    updateActiveButton(deviceId: string) {
+        document.querySelectorAll('.camera-select-button').forEach(button => {
+            const btn = button as HTMLButtonElement;
+            btn.classList.toggle('active', btn.dataset.deviceId === deviceId);
+        });
+    }
+
+    setupZoomSlider() {
+        if (!this.currentStream) return;
+
+        const [track] = this.currentStream.getVideoTracks();
+        const capabilities = track.getCapabilities();
+        const zoomSlider = document.getElementById('zoom') as HTMLInputElement;
+
+        if (capabilities.zoom && zoomSlider) {
+            zoomSlider.min = capabilities.zoom.min.toString();
+            zoomSlider.max = capabilities.zoom.max.toString();
+            zoomSlider.step = capabilities.zoom.step.toString();
+            zoomSlider.value = track.getSettings().zoom?.toString() ?? capabilities.zoom.min.toString();
+            zoomSlider.disabled = false;
+
+            zoomSlider.oninput = (event) => {
+                track.applyConstraints({ advanced: [{ zoom: (event.target as HTMLInputElement).valueAsNumber }] });
+            };
+        } else {
+            zoomSlider.disabled = true;
         }
     }
 
     async detect() {
-        let predictions;
-        if (this.useAltAlgo) {
-            predictions = await this.altDetect();
-        } else {
-            predictions = await this.model.detect(this.video);
-        }
+        if (!this.isDetecting) return;
+
+        const predictions = await this.model.detect(this.video);
         const ctx = this.canvas.getContext('2d');
-        if (!ctx) {
-            return;
-        }
+        if (!ctx) return;
+
         ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
-        // 直接使用模型 detect 返回的 success 字段
-        if (Array.isArray(predictions) && predictions.length === 1 && typeof predictions[0].success === 'boolean') {
-            if (predictions[0].success) {
-                this.matchResult.innerText = `Match found`;
-                console.info('Match found:', predictions[0].raw);
-            } else {
-                this.matchResult.innerText = '';
-                console.info('Match not found:', predictions[0].raw);
-            }
-        }
-
-        // 新模型输出格式：[cx1, cy1, w1, h1, r1, cx2, cy2, w2, h2, r2]
-        if (Array.isArray(predictions) && predictions.length === 1 && Array.isArray(predictions[0].raw)) {
+        if (Array.isArray(predictions) && predictions.length > 0 && Array.isArray(predictions[0].raw)) {
             const arr = predictions[0].raw;
             if (arr.length === 10) {
                 const [cx1, cy1, w1, h1, r1, cx2, cy2, w2, h2, r2] = arr;
-                // 第一个框
-                drawRotatedRect(ctx, cx1, cy1, w1, h1, r1, '#00FFFF');
-                ctx.fillText('1', cx1, cy1);
-                // 第二个框
-                drawRotatedRect(ctx, cx2, cy2, w2, h2, r2, '#FF00FF');
-                ctx.fillText('2', cx2, cy2);
+                const scaleX = this.canvas.clientWidth;
+                const scaleY = this.canvas.clientHeight;
+                drawRotatedRect(ctx, cx1 * scaleX, cy1 * scaleY, w1 * scaleX, h1 * scaleY, r1, '#00FFFF');
+                ctx.fillText('1', cx1 * scaleX, cy1 * scaleY);
+                drawRotatedRect(ctx, cx2 * scaleX, cy2 * scaleY, w2 * scaleX, h2 * scaleY, r2, '#FF00FF');
+                ctx.fillText('2', cx2 * scaleX, cy2 * scaleY);
             }
         }
-// 绘制旋转矩形
+        
+        requestAnimationFrame(() => this.detect());
+    }
+}
+
+const main = new Main();
+main.run();
+
 function drawRotatedRect(ctx: CanvasRenderingContext2D, cx: number, cy: number, w: number, h: number, angle: number, color: string) {
     ctx.save();
     ctx.translate(cx, cy);
@@ -104,44 +188,3 @@ function drawRotatedRect(ctx: CanvasRenderingContext2D, cx: number, cy: number, 
     ctx.strokeRect(-w/2, -h/2, w, h);
     ctx.restore();
 }
-
-
-
-        requestAnimationFrame(() => this.detect());
-    }
-
-    async run() {
-        try {
-            await this.model.load();
-            console.log('Model loaded successfully.');
-        } catch (error) {
-            console.error('Error loading model:', error);
-            this.matchResult.innerText = 'Error loading model. Please check console for details.';
-            return;
-        }
-
-        try {
-            await this.setupCamera();
-            this.video.play();
-            this.canvas.width = this.video.videoWidth;
-            this.canvas.height = this.video.videoHeight;
-            console.log('Camera setup and video started.');
-        } catch (error) {
-            console.error('Error setting up camera:', error);
-            this.matchResult.innerText = 'Error accessing camera. Please ensure camera permissions are granted.';
-            return;
-        }
-        this.detect();
-    }
-
-    // 示例：备用检测算法（可自定义实现）
-    async altDetect(): Promise<any[]> {
-        // 这里可以实现另一种检测逻辑，当前仅返回空数组
-        // 你可以在此处集成其他模型或算法
-        return [];
-    }
-}
-
-const main = new Main();
-main.run();
-

@@ -27,7 +27,6 @@ dev: $(NODE_MODULES)
 build:
 	rm -rf dist
 	npm run build
-	cp node_modules/@tensorflow/tfjs-backend-wasm/dist/*.wasm dist/
 
 # Serve the production build
 serve: build
@@ -101,4 +100,4 @@ gemini:
 	@command -v asciinema >/dev/null 2>&1 || { echo "asciinema is not installed. Installing..."; sudo apt install -y asciinema; }
 	@command -v gemini >/dev/null 2>&1 || { echo "gemini is not installed. Installing..."; npm install -g @google/gemini-cli; }
 	@echo "Running Gemini model training and conversion..."
-	@exec asciinema rec --overwrite --command "gemini" "./.gemini/gemini-$$(date).cast"
+	@exec asciinema rec --overwrite --command "gemini -m gemini-2.5-flash" "./.gemini/gemini-$$(date).cast"

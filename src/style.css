@@ -14,25 +14,81 @@
 }
 
 #app {
-  max-width: 1280px;
-  margin: 0 auto;
-  padding: 2rem;
-  text-align: center;
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
 }
 
-#container {
-  position: relative;
-  width: 640px;
-  height: 480px;
-  margin: 0 auto;
+#top-controls {
+  position: absolute;
+  top: 20px;
+  width: 100%;
+  text-align: center;
+  z-index: 10;
+}
+
+#toggle-algo {
+  padding: 10px 20px;
+  font-size: 1.2em;
+}
+
+#left-controls {
+  position: absolute;
+  left: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  height: 80%; /* Adjust as needed */
+  justify-content: center;
+}
+
+#zoom {
+  -webkit-appearance: slider-vertical; /* For vertical slider */
+  width: 8px;
+  height: 100%;
+}
+
+#right-controls {
+  position: absolute;
+  right: 20px;
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#right-controls button {
+  padding: 8px 12px;
+  font-size: 0.9em;
+}
+
+#bottom-container {
+  position: absolute;
+  bottom: 20px;
+  width: 100%;
+  text-align: center;
+  z-index: 10;
 }
 
 #video, #canvas {
-  position: absolute;
+  position: fixed;
   top: 0;
   left: 0;
-  width: 100%;
-  height: 100%;
+  width: 100vw;
+  height: 100vh;
+  object-fit: cover;
+  z-index: -1; /* Ensure it's in the background */
 }
 
 #match-result {

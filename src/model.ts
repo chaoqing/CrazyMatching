@@ -16,7 +16,6 @@ uu distributed under the License is distributed on an "AS IS" BASIS,
  */
 
 import * as tf from '@tensorflow/tfjs';
-import '@tensorflow/tfjs-backend-wasm'; 
 
 
 // Define a type for your custom detected objects, similar to cocoSsd.DetectedObject
@@ -33,9 +32,6 @@ export class Model {
     // Define your class names in the order they were trained
 
     async load() {
-        if (false) {
-		await tf.setBackend('wasm');
-        }
         await tf.ready(); // Ensure TensorFlow.js backend is ready
         // Load your custom TensorFlow.js model from the public directory
         // The path should be relative to your web server's root.
