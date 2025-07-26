@@ -47,9 +47,14 @@ def draw_predicted_boxes(image, prediction):
 
     return output_image
 
-def run_inference(model_path, image_path, output_dir):
+def run_inference(model_path: Path, image_path: Path, output_dir: Path) -> None:
     """
-    Loads a saved model, runs inference on an image, and saves the result.
+    Loads a TensorFlow SavedModel, runs inference on an image, and saves the output.
+
+    Args:
+        model_path (Path): Path to the directory containing the tf.saved_model.
+        image_path (Path): Path to the input image file.
+        output_dir (Path): Directory where the output image will be saved.
     """
     # 1. Load the saved model
     print(f"Loading model from: {model_path}")
@@ -57,47 +62,56 @@ def run_inference(model_path, image_path, output_dir):
         model = tf.saved_model.load(str(model_path))
     except OSError:
         print(f"Error: Model not found at '{model_path}'.")
-        print("Please ensure you have trained the model by running `python model/train.py` first.")
+        print("Please ensure the model has been trained and saved correctly.")
         return
 
     # 2. Load and preprocess the input image
     print(f"Loading image: {image_path}")
-    if not image_path.exists():
+    if not image_path.is_file():
         print(f"Error: Image file not found at '{image_path}'")
         return
-        
+
     original_image = cv2.imread(str(image_path))
     if original_image is None:
-        print(f"Error: Could not read the image file '{image_path}'")
+        print(f"Error: Could not read the image file '{image_path}' via OpenCV.")
         return
 
-    # Preprocess for the model: resize, convert color, normalize
+    # Preprocess for the model: resize, convert color, normalize to [0, 1]
     img_rgb = cv2.cvtColor(original_image, cv2.COLOR_BGR2RGB)
     img_resized = cv2.resize(img_rgb, (IMG_WIDTH, IMG_HEIGHT))
     img_normalized = img_resized.astype(np.float32) / 255.0
-    
-    # Add a batch dimension
+
+    # Add a batch dimension for the model
     input_tensor = np.expand_dims(img_normalized, axis=0)
 
     # 3. Run prediction
     print("Running inference...")
-    # The loaded model is a callable function
-    prediction = model(input_tensor)
     
-    # The output is a tensor; convert it to a NumPy array and remove the batch dim
-    prediction_array = prediction.numpy().squeeze()
+    # Convert numpy array to a TensorFlow tensor
+    input_tensor = tf.constant(input_tensor, dtype=tf.float32)
+
+    # Access the specific signature for inference
+    inference_fn = model.signatures['serving_default']
+    
+    # The output is a dictionary; get the tensor by its output layer name.
+    # We dynamically get the first key, assuming there's only one output.
+    prediction_dict = inference_fn(input_tensor)
+    output_key = list(prediction_dict.keys())[0] 
+    prediction_tensor = prediction_dict[output_key]
+    
+    # Convert tensor to numpy array and squeeze the batch dimension
+    prediction_array = prediction_tensor.numpy().squeeze()
     print(f"Model prediction (normalized): {prediction_array}")
 
-    # 4. Draw bounding boxes on the original image
+    # 4. Post-process: Draw bounding boxes on the original image
     output_image = draw_predicted_boxes(original_image, prediction_array)
 
-    # 5. Save the result
-    os.makedirs(output_dir, exist_ok=True)
+    # 5. Save the resulting image
+    output_dir.mkdir(parents=True, exist_ok=True)
     output_filename = f"{image_path.stem}_prediction.png"
     output_path = output_dir / output_filename
     cv2.imwrite(str(output_path), output_image)
-    print(f"\nInference complete. Result saved to: {output_path}")
-
+    print(f"\n✅ Inference complete. Result saved to: {output_path}")
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Run inference on an image using the trained Crazy Matching model.")
