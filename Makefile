@@ -107,7 +107,7 @@ convert: # $(SAVED_MODEL_PATH)/saved_model.pb
 	@echo "Converting the trained model to TensorFlow.js format..."
 	# Ensure the output directory exists
 	mkdir -p $(TFJS_OUTPUT_DIR)
-	uv run tensorflowjs_converter \
+	TF_ENABLE_ONEDNN_OPTS=0 uv run tensorflowjs_converter \
 		--input_format=tf_saved_model \
 		--output_node_names='$(OUTPUT_NODE_NAMES)' \
 		--output_format=tfjs_graph_model \

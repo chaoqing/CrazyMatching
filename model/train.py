@@ -17,7 +17,7 @@
 from pathlib import Path
 import tensorflow as tf
 from tensorflow.keras.applications import MobileNetV3Small
-from tensorflow.keras.layers import Dense, GlobalAveragePooling2D, Input
+from tensorflow.keras.layers import Dense, GlobalAveragePooling1D, Input, Reshape, LayerNormalization, MultiHeadAttention
 from tensorflow.keras.models import Model
 import numpy as np
 import os
@@ -60,6 +60,24 @@ def load_and_preprocess_data(data_dir):
     
     return (X_train, y_train), (X_val, y_val), (X_test, y_test)
 
+def create_transformer_encoder_block(embed_dim, num_heads, ff_dim, rate=0.1):
+    """Creates a single Transformer Encoder block."""
+    inputs = Input(shape=(None, embed_dim))
+    
+    # Multi-Head Attention layer
+    attention_output = MultiHeadAttention(num_heads=num_heads, key_dim=embed_dim)(inputs, inputs)
+    
+    # Add & Norm for the attention output
+    out1 = LayerNormalization(epsilon=1e-6)(inputs + attention_output)
+    
+    # Feed-Forward Network
+    ffn_output = Dense(ff_dim, activation="relu")(out1)
+    ffn_output = Dense(embed_dim)(ffn_output)
+
+    # Add & Norm for the FFN output
+    # The output shape is the same as the input shape
+    return Model(inputs=inputs, outputs=LayerNormalization(epsilon=1e-6)(out1 + ffn_output))
+
 def create_custom_object_detection_model():
     """
     Creates a custom object detection model using MobileNetV3 as a feature extractor.
@@ -79,7 +97,21 @@ def create_custom_object_detection_model():
 
     # Add a custom head for bounding box prediction
     x = base_model.output
-    x = GlobalAveragePooling2D()(x)
+
+    # Reshape the feature map into a sequence of patches for the Transformer
+    # (7, 7, 576) -> (49, 576)
+    h, w, c = x.shape[1:]
+    x = Reshape((h * w, c))(x) # Shape: (None, 49, 576)
+
+    # --- Transformer Head Starts Here ---
+    # Create and apply a Transformer Encoder block to find relationships between patches
+    transformer_block = create_transformer_encoder_block(embed_dim=c, num_heads=8, ff_dim=c*2)
+    x = transformer_block(x) # Shape: (None, 49, 576)
+
+    # --- Prediction Head ---
+    # Instead of GlobalAveragePooling2D, we pool the sequence from the Transformer.
+    # The Transformer has already processed spatial relationships, so pooling now aggregates this rich info.
+    x = GlobalAveragePooling1D()(x) # Shape: (None, 576)
     
     # Simple feed-forward network for bounding box prediction
     # The output layer has NUM_BBOX_COORDS (8) units for 2 bounding boxes (x,y,w,h each)
