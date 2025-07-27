@@ -29,6 +29,7 @@ Dockerfile
 # Ignore the directoriy not part of the frontend build
 model
 .gemini
+_deploy_temp
 
 # Ignore package-lock.json as it's copied explicitly
 package-lock.json

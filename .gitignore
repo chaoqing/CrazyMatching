@@ -141,4 +141,7 @@ vite.config.ts.timestamp-*
 # models
 saved_model
 test_output
+
+# Extra
 dist.tar.gz
+_deploy_temp/

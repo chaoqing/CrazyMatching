@@ -53,7 +53,20 @@ build-in-docker:
 	docker rm temp-crazy-matching-container
 
 pack: build-in-docker
-	tar -czvf dist.tar.gz dist
+	tar -czvf dist.tar.gz -C dist ./
+
+deploy: pack
+	@echo "Deploying to GitHub Pages..."
+	test -d _deploy_temp/.git || git clone --single-branch --branch gh-pages $$(git config --get remote.origin.url) _deploy_temp
+	rm -rf _deploy_temp/*
+	tar -xzvf dist.tar.gz -C _deploy_temp
+	cd _deploy_temp && \
+	git add . && \
+	git commit -m "Deploy to GitHub Pages $$(date)"
+	@echo "env -C _deploy_temp git push origin gh-pages"
+
+
+	
 
 # --- Custom Model Training and Conversion --- #
 
