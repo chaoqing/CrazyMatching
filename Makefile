@@ -4,7 +4,7 @@
 NODE_MODULES = node_modules
 
 # Phony targets (targets that don't represent files)
-.PHONY: all install dev build serve clean
+.PHONY: all install dev build build-in-docker pack serve clean
 
 all: install dev
 
@@ -25,7 +25,6 @@ dev: $(NODE_MODULES)
 
 # Build the project for production
 build:
-	rm -rf dist
 	npm run build
 
 # Serve the production build
@@ -43,6 +42,18 @@ localtunnel:
 clean:
 	rm -rf dist $(NODE_MODULES)
 
+# Build frontend in Docker and zip the output
+build-in-docker:
+	@echo "Building frontend in Docker..."
+	docker build -t crazy-matching-frontend .
+	@echo "Copying dist from Docker container and zipping..."
+	@rm -rf dist
+	docker create --name temp-crazy-matching-container crazy-matching-frontend
+	docker cp temp-crazy-matching-container:/usr/share/nginx/html ./dist
+	docker rm temp-crazy-matching-container
+
+pack: build-in-docker
+	tar -czvf dist.tar.gz dist
 
 # --- Custom Model Training and Conversion --- #
 
