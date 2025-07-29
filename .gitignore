@@ -140,6 +140,7 @@ vite.config.ts.timestamp-*
 
 # models
 saved_model
+exported_model
 test_output
 
 # Extra

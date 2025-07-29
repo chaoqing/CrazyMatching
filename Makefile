@@ -77,7 +77,7 @@ MODEL_DIR := model
 TRAIN_SCRIPT := $(MODEL_DIR)/train.py
 PYTHON_REQUIREMENTS := $(MODEL_DIR)/requirements.txt
 
-SAVED_MODEL_PATH := $(MODEL_DIR)/saved_model/my_custom_object_detection_model
+SAVED_MODEL_PATH := $(MODEL_DIR)/exported_model
 TFJS_OUTPUT_DIR := public/models/crazy_matching
 
 # TensorFlow.js converter output node names for your model
@@ -95,7 +95,7 @@ install-python-deps:
 
 train: install-python-deps
 	@echo "Training the custom model..."
-	uv run python $(TRAIN_SCRIPT)
+	uv run python $(TRAIN_SCRIPT) --load-weights --export-model
 
 simulate:
 	@rm -rf $(MODEL_DIR)/data/extracted_animals
