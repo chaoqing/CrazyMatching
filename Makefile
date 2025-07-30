@@ -90,8 +90,7 @@ OUTPUT_NODE_NAMES := bbox_output
 install-python-deps:
 	@echo "Installing Python dependencies..."
 	@command -v uv >/dev/null 2>&1 || python -m pip install --user uv
-	@test -d .venv || uv venv --python 3.10
-	uv pip install -r $(PYTHON_REQUIREMENTS)
+	@test -d .venv || uv venv --python 3.10 && uv sync
 
 train: install-python-deps
 	@echo "Training the custom model..."

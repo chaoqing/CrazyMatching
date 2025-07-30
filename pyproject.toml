@@ -1,0 +1,14 @@
+[project]
+name = "CrazyMatching"
+version = "0.1.0"
+description = "The Crazy Matching game"
+readme = "README.md"
+requires-python = "==3.10.*"
+dependencies = [
+    "matplotlib==3.10.3",
+    "numpy==1.26.4",
+    "opencv-python==4.11.0.86",
+    "scikit-learn==1.7.1",
+    "tensorflow==2.15.1",
+    "tensorflowjs==4.22.0",
+]
