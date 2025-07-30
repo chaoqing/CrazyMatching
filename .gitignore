@@ -144,5 +144,6 @@ exported_model
 test_output
 
 # Extra
+.venv*
 dist.tar.gz
 _deploy_temp/
