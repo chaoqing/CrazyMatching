@@ -113,6 +113,10 @@ convert: # $(SAVED_MODEL_PATH)/saved_model.pb
 		$(SAVED_MODEL_PATH) \
 		$(TFJS_OUTPUT_DIR)
 
+convert-torch:
+	@echo "Converting the trained model to TensorFlow.js format..."
+	uv run python torch_ssd/convert.py
+
 model-clean:
 	@echo "Cleaning up generated model files..."
 	rm -rf $(MODEL_DIR)/saved_model

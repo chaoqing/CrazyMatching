@@ -8,9 +8,13 @@ dependencies = [
     "lxml>=6.0.0",
     "matplotlib==3.10.3",
     "numpy==1.26.4",
+    "onnx>=1.18.0",
+    "onnx-tf>=1.10.0",
     "opencv-python==4.11.0.86",
     "pillow>=11.3.0",
     "scikit-learn==1.7.1",
     "tensorflow==2.15.1",
     "tensorflowjs==4.22.0",
+    "torch==2.7.1",
+    "torchvision==0.22.1",
 ]
