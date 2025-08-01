@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "@tensorflow-models/coco-ssd": "^2.2.3",
-    "@tensorflow/tfjs": "^4.2.0"
+    "@tensorflow/tfjs": "^4.2.0",
+    "onnxruntime-web": "^1.23.0-dev.20250731-e753643480"
   }
 }

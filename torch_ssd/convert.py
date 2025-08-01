@@ -12,13 +12,13 @@ def convert_pytorch_to_onnx():
     print("--- Converting PyTorch model to ONNX ---")
     os.makedirs(TF_SAVED_MODEL_DIR, exist_ok=True)
 
-    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-    model = create_ssd_model(num_classes=16, pretrained=False) # num_classes should match your training
+    device = torch.device('cpu')
+    model = create_ssd_model(num_classes=16, pretrained=True) # Create model with pretrained backbone for consistent architecture
     model.load_state_dict(torch.load(PYTORCH_MODEL_PATH, map_location=device))
     model.eval()
     print(f"PyTorch model loaded from {PYTORCH_MODEL_PATH}")
 
-    dummy_input = torch.randn(1, 3, 300, 300).to(device)
+    dummy_input = torch.randn(1, 3, 320, 320).to(device)
 
     torch.onnx.export(model,
                       dummy_input,
@@ -26,9 +26,11 @@ def convert_pytorch_to_onnx():
                       opset_version=11,
                       do_constant_folding=True,
                       input_names=['input'],
-                      output_names=['output'],
+                      output_names=['boxes', 'labels', 'scores'], # Match output names from _forward_onnx
                       dynamic_axes={'input': {0: 'batch_size'},
-                                    'output': {0: 'batch_size'}})
+                                    'boxes': {0: 'num_detections'},
+                                    'labels': {0: 'num_detections'},
+                                    'scores': {0: 'num_detections'}})
     print(f"PyTorch model exported to ONNX at {ONNX_MODEL_PATH}")
 if __name__ == '__main__':
     # Ensure onnx is imported for the onnx.load call in the dockerized script

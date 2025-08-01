@@ -3,7 +3,7 @@ from torch.utils.data import DataLoader
 from data_utils import PascalVOCDataset, get_transform, CLASSES
 from model import create_ssd_model
 import os
-from torchvision.ops import nms
+from torchvision.ops import nms, box_iou # Import box_iou
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from PIL import Image
@@ -12,28 +12,19 @@ from PIL import Image
 def collate_fn(batch):
     return tuple(zip(*batch))
 
-def evaluate_model(model_path, data_root="./data", score_threshold=0.5):
-    device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
-    print(f"Using device: {device}")
-
-    # 1. Load Dataset
-    dataset = PascalVOCDataset(os.path.join(data_root), get_transform(train=False))
+def evaluate_model(model, dataset, device, score_threshold=0.5, iou_threshold=0.5, num_visualizations=5):
     data_loader = DataLoader(
-        dataset, batch_size=1, shuffle=False, num_workers=4,
+        dataset, batch_size=1, shuffle=False, num_workers=0,
         collate_fn=collate_fn
     )
-    print(f"Loaded evaluation dataset with {len(dataset)} samples.")
-
-    # 2. Create Model and Load Weights
-    model = create_ssd_model(num_classes=len(CLASSES), pretrained=False) # No pre-trained weights for evaluation
-    model.load_state_dict(torch.load(model_path, map_location=device))
-    model.to(device)
     model.eval()
-    print(f"Loaded model from {model_path}")
-
-    # 3. Evaluate
     print("Starting evaluation...")
-    results = []
+    
+    total_iou_sum = 0.0
+    total_gt_boxes = 0
+
+    results = [] # To store results for visualization
+
     with torch.no_grad():
         for i, (images, targets) in enumerate(data_loader):
             images = list(image.to(device) for image in images)
@@ -43,9 +34,10 @@ def evaluate_model(model_path, data_root="./data", score_threshold=0.5):
                 boxes = output['boxes']
                 labels = output['labels']
                 scores = output['scores']
+                gt_boxes = targets[j]['boxes'].to(device)
 
                 # Apply NMS
-                keep = nms(boxes, scores, iou_threshold=0.5)
+                keep = nms(boxes, scores, iou_threshold=iou_threshold)
                 boxes = boxes[keep]
                 labels = labels[keep]
                 scores = scores[keep]
@@ -56,6 +48,18 @@ def evaluate_model(model_path, data_root="./data", score_threshold=0.5):
                 labels = labels[high_scores_idx]
                 scores = scores[high_scores_idx]
 
+                # Calculate IOU for predicted boxes against all ground truth boxes
+                if boxes.shape[0] > 0 and gt_boxes.shape[0] > 0:
+                    iou_matrix = box_iou(boxes, gt_boxes)
+                    
+                    # Sum of max IOU for each predicted box
+                    # For each predicted box, find the best matching ground truth box
+                    for pred_idx in range(boxes.shape[0]):
+                        max_iou_for_pred, _ = torch.max(iou_matrix[pred_idx, :], dim=0)
+                        total_iou_sum += max_iou_for_pred.item()
+                    
+                    total_gt_boxes += gt_boxes.shape[0] # Count ground truth boxes
+
                 results.append({
                     'image_id': targets[j]['image_id'].item(),
                     'boxes': boxes.cpu().numpy(),
@@ -65,19 +69,21 @@ def evaluate_model(model_path, data_root="./data", score_threshold=0.5):
                     'gt_labels': targets[j]['labels'].cpu().numpy()
                 })
             
-            if (i + 1) % 10 == 0:
-                print(f"Processed {i + 1}/{len(data_loader)} samples.")
 
     print("Evaluation complete.")
     
+    average_iou = total_iou_sum / total_gt_boxes if total_gt_boxes > 0 else 0.0
+    print(f"Average IoU (predictions vs. ground truth): {average_iou:.4f}")
+
     # Optional: Visualize some predictions
     print("Visualizing a few predictions...")
-    num_visualizations = min(5, len(results))
+    num_visualizations = min(num_visualizations, len(results))
     for k in range(num_visualizations):
         res = results[k]
+        # Assuming data_loader.dataset has image_files attribute
         img_idx = res['image_id']
-        img_name = dataset.image_files[img_idx]
-        img_path = os.path.join(dataset.image_dir, img_name)
+        img_name = data_loader.dataset.image_files[img_idx]
+        img_path = os.path.join(data_loader.dataset.image_dir, img_name)
         img = Image.open(img_path).convert("RGB")
 
         fig, ax = plt.subplots(1, figsize=(10, 10))
@@ -106,7 +112,8 @@ def evaluate_model(model_path, data_root="./data", score_threshold=0.5):
         plt.savefig(f"evaluation_example_{img_idx}.png")
         plt.close(fig)
         print(f"Saved evaluation example {img_idx} to evaluation_example_{img_idx}.png")
-
+    
+    return average_iou
 
 if __name__ == '__main__':
     import argparse
@@ -115,6 +122,8 @@ if __name__ == '__main__':
     parser.add_argument('--model_path', type=str, default='./ssd_model.pth', help='Path to the trained model weights.')
     parser.add_argument('--data_root', type=str, default='./data', help='Root directory for dataset.')
     parser.add_argument('--score_threshold', type=float, default=0.5, help='Confidence threshold for predictions.')
+    parser.add_argument('--iou_threshold', type=float, default=0.5, help='IoU threshold for NMS and evaluation.')
+    parser.add_argument('--num_visualizations', type=int, default=5, help='Number of visualizations to save.')
     
     args = parser.parse_args()
 
@@ -127,6 +136,26 @@ if __name__ == '__main__':
          not os.path.exists(os.path.join(data_full_path, "annotations")):
         print(f"Error: Data not found in {data_full_path}. Please generate data first.")
     else:
-        evaluate_model(model_path=model_full_path,
-                       data_root=data_full_path,
-                       score_threshold=args.score_threshold)
+        device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+        print(f"Using device: {device}")
+
+        # Load Dataset
+        dataset = PascalVOCDataset(os.path.join(data_full_path), get_transform(train=False))
+        data_loader = DataLoader(
+            dataset, batch_size=1, shuffle=False, num_workers=0, # Set num_workers to 0 for Windows compatibility or debugging
+            collate_fn=collate_fn
+        )
+        print(f"Loaded evaluation dataset with {len(dataset)} samples.")
+
+        # Create Model and Load Weights
+        model = create_ssd_model(num_classes=len(CLASSES), pretrained=False)
+        model.load_state_dict(torch.load(model_full_path, map_location=device))
+        model.to(device)
+        
+        avg_iou = evaluate_model(model=model, 
+                                 dataset=dataset, 
+                                 device=device, 
+                                 score_threshold=args.score_threshold,
+                                 iou_threshold=args.iou_threshold,
+                                 num_visualizations=args.num_visualizations)
+        print(f"Final Average IoU: {avg_iou:.4f}")

@@ -149,3 +149,4 @@ dist.tar.gz
 _deploy_temp/
 __pycache__/
 tf_saved_model
+*.onnx

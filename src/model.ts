@@ -16,7 +16,7 @@ uu distributed under the License is distributed on an "AS IS" BASIS,
  */
 
 import * as tf from '@tensorflow/tfjs';
-
+import * as ort from 'onnxruntime-web';
 
 // Define a type for your custom detected objects, similar to cocoSsd.DetectedObject
 // Adjust properties based on your model's output and what you need for your game logic.
@@ -151,6 +151,194 @@ export class Model {
                 max = Math.max(max, proj);
             }
             return [min, max];
+        }
+    }
+}
+
+// Helper function for Intersection over Union (IoU)
+function iou(box1: number[], box2: number[]): number {
+    const x1 = Math.max(box1[0], box2[0]);
+    const y1 = Math.max(box1[1], box2[1]);
+    const x2 = Math.min(box1[2], box2[2]);
+    const y2 = Math.min(box1[3], box2[3]);
+
+    const intersectionWidth = Math.max(0, x2 - x1);
+    const intersectionHeight = Math.max(0, y2 - y1);
+    const intersectionArea = intersectionWidth * intersectionHeight;
+
+    const box1Area = (box1[2] - box1[0]) * (box1[3] - box1[1]);
+    const box2Area = (box2[2] - box2[0]) * (box2[3] - box2[1]);
+
+    const unionArea = box1Area + box2Area - intersectionArea;
+
+    return unionArea === 0 ? 0 : intersectionArea / unionArea;
+}
+
+// Non-Maximum Suppression (NMS) implementation
+function nms(boxes: number[][], scores: number[], iouThreshold: number): number[] {
+    const sortedIndices = scores.map((score, index) => ({ score, index }))
+                               .sort((a, b) => b.score - a.score)
+                               .map(item => item.index);
+
+    const selectedIndices: number[] = [];
+    const suppressed = new Array(boxes.length).fill(false);
+
+    for (const currentIdx of sortedIndices) {
+        if (suppressed[currentIdx]) {
+            continue;
+        }
+
+        selectedIndices.push(currentIdx);
+        const currentBox = boxes[currentIdx];
+
+        for (let i = 0; i < boxes.length; i++) {
+            if (i === currentIdx || suppressed[i]) {
+                continue;
+            }
+
+            const otherBox = boxes[i];
+            if (iou(currentBox, otherBox) > iouThreshold) {
+                suppressed[i] = true;
+            }
+        }
+    }
+    return selectedIndices;
+}
+
+export class SSDModel {
+    private session: ort.InferenceSession | null = null;
+    private inputShape: [number, number, number, number] = [1, 3, 320, 320]; // Default input shape for SSDLite
+
+    async load() {
+        ort.env.wasm.numThreads = 1; // Use single thread for WASM for better compatibility
+        ort.env.wasm.simd = true; // Enable SIMD for performance if available
+        ort.env.wasm.proxy = true; // Use web worker for inference
+
+        const modelPath = './models/crazy_matching.onnx';
+        try {
+            this.session = await ort.InferenceSession.create(modelPath, {
+                executionProviders: ['wasm'],
+                graphOptimizationLevel: 'all'
+            });
+            console.log('ONNX model loaded from:', modelPath);
+            
+            // Get input shape from inputMetadata
+            if (this.session.inputNames.length > 0) {
+                const inputMeta = this.session.inputMetadata[0];
+                if (inputMeta && inputMeta.isTensor && (inputMeta as any).shape && (inputMeta as any).shape.length === 4) {
+                    this.inputShape = (inputMeta as any).shape as [number, number, number, number];
+                }
+            }
+
+        } catch (e) {
+            console.error('Failed to load ONNX model:', e);
+        }
+    }
+
+    async detect(input: HTMLVideoElement): Promise<ModelDetectResult[]> {
+        if (!this.session) {
+            console.log('ONNX Model not loaded.');
+            return [];
+        }
+
+        const width = input.videoWidth;
+        const height = input.videoHeight;
+        console.log(`Input video dimensions: ${width}x${height}`);
+
+        // Preprocess image for ONNX model
+        const imgTensor = tf.browser.fromPixels(input);
+        console.log(`Input video dimensions: ${imgTensor}`);
+        const resized = tf.image.resizeBilinear(imgTensor, [this.inputShape[2], this.inputShape[3]]);
+        const normalized = resized.div(255.0);
+        const transposed = normalized.transpose([2, 0, 1]); // HWC to CHW
+        const expanded = transposed.expandDims(0); // Add batch dimension
+        const inputData = new Float32Array(expanded.dataSync());
+
+        tf.dispose([imgTensor, resized, normalized, transposed, expanded]);
+
+        const inputName = this.session.inputNames[0];
+        const feeds: { [key: string]: ort.Tensor } = {}; // Use a mutable object for feeds
+        feeds[inputName] = new ort.Tensor('float32', inputData, this.inputShape);
+        console.log('Running ONNX inference with feeds:', feeds, inputName);
+
+        try {
+            const results = await this.session.run(feeds);
+            // Assuming output names are 'boxes', 'labels', 'scores'
+            const boxes = results.boxes.data as Float32Array; // [num_detections, 4] (xmin, ymin, xmax, ymax)
+            const labels = results.labels.data as Int32Array; // [num_detections]
+            const scores = results.scores.data as Float32Array; // [num_detections]
+
+            const detections: { box: number[], label: number, score: number }[] = [];
+            for (let i = 0; i < labels.length; i++) {
+                const score = scores[i];
+                if (score > 0.5) { // Confidence threshold
+                    const box = [
+                        boxes[i * 4] * width, // xmin
+                        boxes[i * 4 + 1] * height, // ymin
+                        boxes[i * 4 + 2] * width, // xmax
+                        boxes[i * 4 + 3] * height // ymax
+                    ];
+                    detections.push({ box, label: labels[i], score });
+                }
+            }
+
+            // Apply NMS
+            const nmsBoxes = detections.map(d => d.box);
+            const nmsScores = detections.map(d => d.score);
+            const selectedIndices = nms(nmsBoxes, nmsScores, 0.45); // IoU threshold for NMS
+
+            const finalDetections = selectedIndices.map(idx => detections[idx]);
+
+            // Group detections by class
+            const detectionsByClass: { [key: number]: typeof finalDetections } = {};
+            for (const det of finalDetections) {
+                if (det.label !== 0) { // Exclude background class
+                    if (!detectionsByClass[det.label]) {
+                        detectionsByClass[det.label] = [];
+                    }
+                    detectionsByClass[det.label].push(det);
+                }
+            }
+
+            let success = false;
+            let rawOutput: number[] = [];
+
+            // Find if there are two animals of the same class
+            for (const classId in detectionsByClass) {
+                const classDetections = detectionsByClass[classId];
+                if (classDetections.length >= 2) {
+                    // Take the first two detections of the same class
+                    const det1 = classDetections[0];
+                    const det2 = classDetections[1];
+
+                    // Convert bbox to [cx, cy, w, h]
+                    const boxToCxCyWh = (box: number[]) => {
+                        const xmin = box[0];
+                        const ymin = box[1];
+                        const xmax = box[2];
+                        const ymax = box[3];
+                        const w = xmax - xmin;
+                        const h = ymax - ymin;
+                        const cx = xmin + w / 2;
+                        const cy = ymin + h / 2;
+                        return [cx, cy, w, h];
+                    };
+
+                    const [cx1, cy1, w1, h1] = boxToCxCyWh(det1.box);
+                    const [cx2, cy2, w2, h2] = boxToCxCyWh(det2.box);
+
+                    // r1 and r2 are always 0 for this model
+                    rawOutput = [cx1, cy1, w1, h1, 0, cx2, cy2, w2, h2, 0];
+                    success = true;
+                    break; // Found a match, no need to check other classes
+                }
+            }
+
+            return [{ raw: rawOutput, success }];
+
+        } catch (e) {
+            console.error('Failed to run ONNX inference:', e);
+            return [];
         }
     }
 }

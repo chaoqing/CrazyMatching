@@ -1,16 +1,28 @@
 if (import.meta.env.DEV) {
   import('eruda').then((eruda) => {
-    eruda.default.init();
+    eruda.default.init({
+        useShadowDom: true,
+        autoScale: true,
+        defaults: {
+            displaySize: 100,
+            transparency: 0.95,
+            theme: 'Monokai Pro'
+        }
+    });
+    eruda.default.show();
   });
 }
 
 import './style.css';
-import { Model } from './model';
+import { Model, SSDModel, ModelDetectResult } from './model';
 
 class Main {
     private video: HTMLVideoElement;
     private canvas: HTMLCanvasElement;
-    private model: Model;
+    private tfjsModel: Model;
+    private onnxModel: SSDModel;
+    private currentModel: Model | SSDModel;
+    private activeModelType: 'tfjs' | 'onnx' = 'onnx'; // Default to tfjs model
     private isDetecting: boolean = false;
     private videoDevices: MediaDeviceInfo[] = [];
     private currentStream: MediaStream | null = null;
@@ -18,7 +30,10 @@ class Main {
     constructor() {
         this.video = document.getElementById('video') as HTMLVideoElement;
         this.canvas = document.getElementById('canvas') as HTMLCanvasElement;
-        this.model = new Model();
+        this.tfjsModel = new Model();
+        this.onnxModel = new SSDModel();
+        this.currentModel = this.onnxModel;
+
         const toggleBtn = document.getElementById('toggle-algo') as HTMLButtonElement;
         if (toggleBtn) {
             toggleBtn.addEventListener('click', () => {
@@ -34,10 +49,23 @@ class Main {
                 }
             });
         }
+
+        const switchModelBtn = document.getElementById('switch-model-btn') as HTMLButtonElement;
+        if (switchModelBtn) {
+            switchModelBtn.addEventListener('click', async () => {
+                this.activeModelType = this.activeModelType === 'tfjs' ? 'onnx' : 'tfjs';
+                switchModelBtn.textContent = `Switch to ${this.activeModelType === 'tfjs' ? 'ONNX' : 'TF.js'} Model`;
+                
+                this.currentModel = this.activeModelType === 'tfjs' ? this.tfjsModel : this.onnxModel;
+                console.log(`Switching to ${this.activeModelType} model...`);
+                await this.currentModel.load();
+                console.log(`${this.activeModelType} model loaded.`);
+            });
+        }
     }
 
     async run() {
-        await this.model.load();
+        await this.currentModel.load();
         await this.setupCamera();
     }
 
@@ -153,7 +181,7 @@ class Main {
     async detect() {
         if (!this.isDetecting) return;
 
-        const predictions = await this.model.detect(this.video);
+        const predictions: ModelDetectResult[] = await this.currentModel.detect(this.video);
         const ctx = this.canvas.getContext('2d');
         if (!ctx) return;
 

@@ -13,7 +13,20 @@ CLASSES = [
     'animal_806', 'animal_859', 'animal_913', 'animal_951', 'animal_986'
 ]
 
-class PascalVOCDataset(data.Dataset):
+class CachedDataset(data.Dataset):
+        def __init__(self, original_dataset):
+                self.original_dataset = original_dataset
+                self.cache = {}
+
+        def __len__(self):
+                return len(self.original_dataset)
+
+        def __getitem__(self, idx):
+                if idx not in self.cache:
+                        self.cache[idx] = self.original_dataset[idx]
+                return self.cache[idx]
+
+class _PascalVOCDataset(data.Dataset):
     def __init__(self, root, transforms=None):
         self.root = root
         self.transforms = transforms
@@ -72,6 +85,10 @@ class PascalVOCDataset(data.Dataset):
     def __len__(self):
         return len(self.image_files)
 
+def PascalVOCDataset(*args, cache=False, **kwargs):
+    return CachedDataset(_PascalVOCDataset(*args, **kwargs)) if cache else _PascalVOCDataset(*args, **kwargs)
+
+
 def get_transform(train):
     transforms = []
     if train:
@@ -99,7 +116,7 @@ if __name__ == '__main__':
     # Create a dummy data directory for testing if it doesn't exist
     if not os.path.exists(data_root):
         print(f"Data directory {data_root} not found. Please run generate_tfod_data.py first.")
-        print("Example: uv run python tfod_coco_ssd/data/generate_tfod_data.py --num_samples 10 --output_base_dir torch_ssd/data")
+        print("Example: uv run python tfod_coco_ssd/data/generate_tfod_data.py --original_assets_dir model/data --num_samples 100 --output_base_dir torch_ssd/data")
     else:
         dataset = PascalVOCDataset(data_root, get_transform(train=True))
         print(f"Dataset size: {len(dataset)}")
