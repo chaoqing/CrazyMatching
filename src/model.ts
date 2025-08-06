@@ -100,23 +100,23 @@ export class Model {
         // 返回 raw 和 success 字段，供前端判断和绘制
         return [{ raw, success }];
         // 获取旋转矩形四个顶点
-        function getRectCorners(cx: number, cy: number, w: number, h: number, angle: number): Array<{x: number, y: number}> {
+        function getRectCorners(cx: number, cy: number, w: number, h: number, angle: number): Array<{ x: number, y: number }> {
             const hw = w / 2, hh = h / 2;
             const corners = [
-                {x: -hw, y: -hh},
-                {x: hw, y: -hh},
-                {x: hw, y: hh},
-                {x: -hw, y: hh}
+                { x: -hw, y: -hh },
+                { x: hw, y: -hh },
+                { x: hw, y: hh },
+                { x: -hw, y: hh }
             ];
             return corners.map(pt => {
                 const x = pt.x * Math.cos(angle) - pt.y * Math.sin(angle) + cx;
                 const y = pt.x * Math.sin(angle) + pt.y * Math.cos(angle) + cy;
-                return {x, y};
+                return { x, y };
             });
         }
 
         // 判断两个旋转矩形是否重叠（分离轴定理，近似实现）
-        function isRectOverlap(a: Array<{x: number, y: number}>, b: Array<{x: number, y: number}>): boolean {
+        function isRectOverlap(a: Array<{ x: number, y: number }>, b: Array<{ x: number, y: number }>): boolean {
             // 检查所有轴
             const axes = getAxes(a).concat(getAxes(b));
             for (const axis of axes) {
@@ -129,19 +129,19 @@ export class Model {
             return true; // 所有轴都重叠
         }
 
-        function getAxes(corners: Array<{x: number, y: number}>): Array<{x: number, y: number}> {
+        function getAxes(corners: Array<{ x: number, y: number }>): Array<{ x: number, y: number }> {
             const axes = [];
             for (let i = 0; i < corners.length; i++) {
                 const p1 = corners[i];
                 const p2 = corners[(i + 1) % corners.length];
-                const edge = {x: p2.x - p1.x, y: p2.y - p1.y};
+                const edge = { x: p2.x - p1.x, y: p2.y - p1.y };
                 // 垂直向量
-                axes.push({x: -edge.y, y: edge.x});
+                axes.push({ x: -edge.y, y: edge.x });
             }
             return axes;
         }
 
-        function projectPolygon(corners: Array<{x: number, y: number}>, axis: {x: number, y: number}): [number, number] {
+        function projectPolygon(corners: Array<{ x: number, y: number }>, axis: { x: number, y: number }): [number, number] {
             const norm = Math.sqrt(axis.x * axis.x + axis.y * axis.y);
             const ax = axis.x / norm, ay = axis.y / norm;
             let min = Infinity, max = -Infinity;
@@ -177,8 +177,8 @@ function iou(box1: number[], box2: number[]): number {
 // Non-Maximum Suppression (NMS) implementation
 function nms(boxes: number[][], scores: number[], iouThreshold: number): number[] {
     const sortedIndices = scores.map((score, index) => ({ score, index }))
-                               .sort((a, b) => b.score - a.score)
-                               .map(item => item.index);
+        .sort((a, b) => b.score - a.score)
+        .map(item => item.index);
 
     const selectedIndices: number[] = [];
     const suppressed = new Array(boxes.length).fill(false);
@@ -213,6 +213,7 @@ export class SSDModel {
         ort.env.wasm.numThreads = 1; // Use single thread for WASM for better compatibility
         ort.env.wasm.simd = true; // Enable SIMD for performance if available
         ort.env.wasm.proxy = true; // Use web worker for inference
+        ort.env.wasm.wasmPaths = './'; // Set the relative path for WASM files to the assets folder
 
         const modelPath = './models/crazy_matching.onnx';
         try {
@@ -221,12 +222,15 @@ export class SSDModel {
                 graphOptimizationLevel: 'all'
             });
             console.log('ONNX model loaded from:', modelPath);
-            
+
             // Get input shape from inputMetadata
             if (this.session.inputNames.length > 0) {
                 const inputMeta = this.session.inputMetadata[0];
                 if (inputMeta && inputMeta.isTensor && (inputMeta as any).shape && (inputMeta as any).shape.length === 4) {
-                    this.inputShape = (inputMeta as any).shape as [number, number, number, number];
+                    // Handle dynamic input shapes: replace string dimensions (like 'batch_size') with 1
+                    this.inputShape = (inputMeta as any).shape.map((dim: string | number) =>
+                        typeof dim === 'string' ? 1 : dim
+                    ) as [number, number, number, number];
                 }
             }
 
@@ -247,7 +251,6 @@ export class SSDModel {
 
         // Preprocess image for ONNX model
         const imgTensor = tf.browser.fromPixels(input);
-        console.log(`Input video dimensions: ${imgTensor}`);
         const resized = tf.image.resizeBilinear(imgTensor, [this.inputShape[2], this.inputShape[3]]);
         const normalized = resized.div(255.0);
         const transposed = normalized.transpose([2, 0, 1]); // HWC to CHW
@@ -259,14 +262,13 @@ export class SSDModel {
         const inputName = this.session.inputNames[0];
         const feeds: { [key: string]: ort.Tensor } = {}; // Use a mutable object for feeds
         feeds[inputName] = new ort.Tensor('float32', inputData, this.inputShape);
-        console.log('Running ONNX inference with feeds:', feeds, inputName);
 
         try {
             const results = await this.session.run(feeds);
             // Assuming output names are 'boxes', 'labels', 'scores'
             const boxes = results.boxes.data as Float32Array; // [num_detections, 4] (xmin, ymin, xmax, ymax)
             const labels = results.labels.data as Int32Array; // [num_detections]
-            const scores = results.scores.data as Float32Array; // [num_detections]
+            const scores = Array.from(results.scores.data as any).map((s: any) => Number(s)); // [num_detections]
 
             const detections: { box: number[], label: number, score: number }[] = [];
             for (let i = 0; i < labels.length; i++) {
@@ -285,6 +287,7 @@ export class SSDModel {
             // Apply NMS
             const nmsBoxes = detections.map(d => d.box);
             const nmsScores = detections.map(d => d.score);
+            console.log('Detections before NMS:', nmsBoxes, nmsScores);
             const selectedIndices = nms(nmsBoxes, nmsScores, 0.45); // IoU threshold for NMS
 
             const finalDetections = selectedIndices.map(idx => detections[idx]);
@@ -299,6 +302,7 @@ export class SSDModel {
                     detectionsByClass[det.label].push(det);
                 }
             }
+            console.log('Detections after NMS:', detectionsByClass);
 
             let success = false;
             let rawOutput: number[] = [];
