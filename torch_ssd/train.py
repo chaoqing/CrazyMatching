@@ -151,9 +151,10 @@ if __name__ == '__main__':
                            args.onnx_output_path,
                            opset_version=11, 
                            input_names=['input'], 
-                           output_names=['boxes', 'labels', 'scores'],
-                           dynamic_axes={'input' : {0 : 'batch_size'},
-                                         'boxes' : {0 : 'num_detections'},
-                                         'labels' : {0 : 'num_detections'},
-                                         'scores' : {0 : 'num_detections'}})
+                           output_names=['boxes', 'scores', 'labels'],
+                           dynamic_axes={'input': {0: 'batch_size'},
+                               'boxes': {0: 'num_detections'},
+                               'scores': {0: 'num_detections'},
+                               'labels': {0: 'num_detections'}
+                               })
         print("ONNX model exported successfully.")

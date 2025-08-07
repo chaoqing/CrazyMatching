@@ -26,11 +26,12 @@ def convert_pytorch_to_onnx():
                       opset_version=11,
                       do_constant_folding=True,
                       input_names=['input'],
-                      output_names=['boxes', 'labels', 'scores'], # Match output names from _forward_onnx
+                      output_names=['boxes', 'scores', 'labels'],
                       dynamic_axes={'input': {0: 'batch_size'},
                                     'boxes': {0: 'num_detections'},
-                                    'labels': {0: 'num_detections'},
-                                    'scores': {0: 'num_detections'}})
+                                    'scores': {0: 'num_detections'},
+                                    'labels': {0: 'num_detections'}
+                                    })
     print(f"PyTorch model exported to ONNX at {ONNX_MODEL_PATH}")
 if __name__ == '__main__':
     # Ensure onnx is imported for the onnx.load call in the dockerized script

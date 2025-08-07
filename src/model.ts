@@ -212,13 +212,13 @@ export class SSDModel {
     async load() {
         ort.env.wasm.numThreads = 1; // Use single thread for WASM for better compatibility
         ort.env.wasm.simd = true; // Enable SIMD for performance if available
-        ort.env.wasm.proxy = true; // Use web worker for inference
-        ort.env.wasm.wasmPaths = './'; // Set the relative path for WASM files to the assets folder
+        //ort.env.wasm.proxy = true; // Use web worker for inference
+        //ort.env.wasm.wasmPaths = './'; // Set the relative path for WASM files to the assets folder
 
         const modelPath = './models/crazy_matching.onnx';
         try {
             this.session = await ort.InferenceSession.create(modelPath, {
-                executionProviders: ['wasm'],
+                executionProviders: ['webgl', 'wasm'],
                 graphOptimizationLevel: 'all'
             });
             console.log('ONNX model loaded from:', modelPath);
@@ -265,15 +265,14 @@ export class SSDModel {
 
         try {
             const results = await this.session.run(feeds);
-            // Assuming output names are 'boxes', 'labels', 'scores'
             const boxes = results.boxes.data as Float32Array; // [num_detections, 4] (xmin, ymin, xmax, ymax)
+            const scores = results.scores.data as Float32Array; // [num_detections]
             const labels = results.labels.data as Int32Array; // [num_detections]
-            const scores = Array.from(results.scores.data as any).map((s: any) => Number(s)); // [num_detections]
 
             const detections: { box: number[], label: number, score: number }[] = [];
             for (let i = 0; i < labels.length; i++) {
                 const score = scores[i];
-                if (score > 0.5) { // Confidence threshold
+                if (score > 0.2) { // Confidence threshold
                     const box = [
                         boxes[i * 4] * width, // xmin
                         boxes[i * 4 + 1] * height, // ymin
@@ -287,7 +286,6 @@ export class SSDModel {
             // Apply NMS
             const nmsBoxes = detections.map(d => d.box);
             const nmsScores = detections.map(d => d.score);
-            console.log('Detections before NMS:', nmsBoxes, nmsScores);
             const selectedIndices = nms(nmsBoxes, nmsScores, 0.45); // IoU threshold for NMS
 
             const finalDetections = selectedIndices.map(idx => detections[idx]);

@@ -37,9 +37,8 @@ if __name__ == '__main__':
     dummy_input = torch.randn(1, 3, 320, 320) # Batch size 1, 3 channels, 320x320 image
     model.eval()
     with torch.no_grad():
-        predictions = model(dummy_input)
+        predictions, = model(dummy_input)
     
-    print("\nModel output (first prediction):")
-    print(predictions[0]['boxes'].shape) # Should be [num_detections, 4]
-    print(predictions[0]['labels'].shape) # Should be [num_detections]
-    print(predictions[0]['scores'].shape) # Should be [num_detections]
+    print("\nModel output:")
+    for k, v in predictions.items():
+        print(f"{k}: {type(v)} {v.shape} {v.dtype}")
