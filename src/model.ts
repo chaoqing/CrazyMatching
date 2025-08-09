@@ -252,7 +252,7 @@ export class SSDModel {
         // Preprocess image for ONNX model
         const imgTensor = tf.browser.fromPixels(input);
         const resized = tf.image.resizeBilinear(imgTensor, [this.inputShape[2], this.inputShape[3]]);
-        const normalized = resized.div(255.0);
+        const normalized = resized; //.div(255.0);
         const transposed = normalized.transpose([2, 0, 1]); // HWC to CHW
         const expanded = transposed.expandDims(0); // Add batch dimension
         const inputData = new Float32Array(expanded.dataSync());
@@ -274,10 +274,10 @@ export class SSDModel {
                 const score = scores[i];
                 if (score > 0.2) { // Confidence threshold
                     const box = [
-                        boxes[i * 4] * width, // xmin
-                        boxes[i * 4 + 1] * height, // ymin
-                        boxes[i * 4 + 2] * width, // xmax
-                        boxes[i * 4 + 3] * height // ymax
+                        boxes[i * 4] * width/320, // xmin
+                        boxes[i * 4 + 1] * height/320, // ymin
+                        boxes[i * 4 + 2] * width/320, // xmax
+                        boxes[i * 4 + 3] * height/320 // ymax
                     ];
                     detections.push({ box, label: labels[i], score });
                 }
