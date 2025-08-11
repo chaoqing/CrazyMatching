@@ -208,6 +208,7 @@ function nms(boxes: number[][], scores: number[], iouThreshold: number): number[
 export class SSDModel {
     private session: ort.InferenceSession | null = null;
     private inputShape: [number, number, number, number] = [1, 3, 320, 320]; // Default input shape for SSDLite
+    
 
     async load() {
         ort.env.wasm.numThreads = 1; // Use single thread for WASM for better compatibility
@@ -247,12 +248,14 @@ export class SSDModel {
 
         const width = input.videoWidth;
         const height = input.videoHeight;
+        const resized_height = this.inputShape[2];
+        const resized_width = this.inputShape[3];
         console.log(`Input video dimensions: ${width}x${height}`);
 
         // Preprocess image for ONNX model
         const imgTensor = tf.browser.fromPixels(input);
-        const resized = tf.image.resizeBilinear(imgTensor, [this.inputShape[2], this.inputShape[3]]);
-        const normalized = resized; //.div(255.0);
+        const resized = tf.image.resizeBilinear(imgTensor, [resized_height, resized_width]);
+        const normalized = resized.div(255.0);
         const transposed = normalized.transpose([2, 0, 1]); // HWC to CHW
         const expanded = transposed.expandDims(0); // Add batch dimension
         const inputData = new Float32Array(expanded.dataSync());
@@ -273,11 +276,12 @@ export class SSDModel {
             for (let i = 0; i < labels.length; i++) {
                 const score = scores[i];
                 if (score > 0.2) { // Confidence threshold
+                    // Convert box coordinates to scale free [0,1]
                     const box = [
-                        boxes[i * 4] * width/320, // xmin
-                        boxes[i * 4 + 1] * height/320, // ymin
-                        boxes[i * 4 + 2] * width/320, // xmax
-                        boxes[i * 4 + 3] * height/320 // ymax
+                        boxes[i * 4] / resized_width, // xmin
+                        boxes[i * 4 + 1] / resized_height, // ymin
+                        boxes[i * 4 + 2] / resized_width, // xmax
+                        boxes[i * 4 + 3] / resized_height, // ymax
                     ];
                     detections.push({ box, label: labels[i], score });
                 }
@@ -304,36 +308,49 @@ export class SSDModel {
 
             let success = false;
             let rawOutput: number[] = [];
+            let maxCompositeScore = -1;
+            let bestPair: { det1: typeof finalDetections[0], det2: typeof finalDetections[0] } | null = null;
 
-            // Find if there are two animals of the same class
-            for (const classId in detectionsByClass) {
-                const classDetections = detectionsByClass[classId];
-                if (classDetections.length >= 2) {
-                    // Take the first two detections of the same class
-                    const det1 = classDetections[0];
-                    const det2 = classDetections[1];
+            // Iterate through all unique pairs of detections
+            for (let i = 0; i < finalDetections.length; i++) {
+                for (let j = i + 1; j < finalDetections.length; j++) {
+                    const det1 = finalDetections[i];
+                    const det2 = finalDetections[j];
 
-                    // Convert bbox to [cx, cy, w, h]
-                    const boxToCxCyWh = (box: number[]) => {
-                        const xmin = box[0];
-                        const ymin = box[1];
-                        const xmax = box[2];
-                        const ymax = box[3];
-                        const w = xmax - xmin;
-                        const h = ymax - ymin;
-                        const cx = xmin + w / 2;
-                        const cy = ymin + h / 2;
-                        return [cx, cy, w, h];
-                    };
+                    // Only consider pairs of the same class
+                    if (det1.label === det2.label) {
+                        // Calculate composite score: balances total score and score similarity
+                        // Higher total score is better, smaller difference is better
+                        const compositeScore = (det1.score + det2.score) * (1 - Math.abs(det1.score - det2.score));
 
-                    const [cx1, cy1, w1, h1] = boxToCxCyWh(det1.box);
-                    const [cx2, cy2, w2, h2] = boxToCxCyWh(det2.box);
-
-                    // r1 and r2 are always 0 for this model
-                    rawOutput = [cx1, cy1, w1, h1, 0, cx2, cy2, w2, h2, 0];
-                    success = true;
-                    break; // Found a match, no need to check other classes
+                        if (compositeScore > maxCompositeScore) {
+                            maxCompositeScore = compositeScore;
+                            bestPair = { det1, det2 };
+                        }
+                    }
                 }
+            }
+
+            if (bestPair) {
+                // Convert bbox to [cx, cy, w, h]
+                const boxToCxCyWh = (box: number[]) => {
+                    const xmin = box[0];
+                    const ymin = box[1];
+                    const xmax = box[2];
+                    const ymax = box[3];
+                    const w = xmax - xmin;
+                    const h = ymax - ymin;
+                    const cx = xmin + w / 2;
+                    const cy = ymin + h / 2;
+                    return [cx, cy, w, h];
+                };
+
+                const [cx1, cy1, w1, h1] = boxToCxCyWh(bestPair.det1.box);
+                const [cx2, cy2, w2, h2] = boxToCxCyWh(bestPair.det2.box);
+
+                // r1 and r2 are always 0 for this model
+                rawOutput = [cx1, cy1, w1, h1, 0, cx2, cy2, w2, h2, 0];
+                success = true;
             }
 
             return [{ raw: rawOutput, success }];

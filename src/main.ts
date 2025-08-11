@@ -163,7 +163,7 @@ class Main {
         const capabilities = track.getCapabilities();
         const zoomSlider = document.getElementById('zoom') as HTMLInputElement;
 
-        if (capabilities.zoom && zoomSlider) {
+        if (capabilities.zoom && zoomSlider && capabilities.zoom.min !== undefined && capabilities.zoom.max !== undefined && capabilities.zoom.step !== undefined) {
             zoomSlider.min = capabilities.zoom.min.toString();
             zoomSlider.max = capabilities.zoom.max.toString();
             zoomSlider.step = capabilities.zoom.step.toString();
@@ -185,11 +185,11 @@ class Main {
         const ctx = this.canvas.getContext('2d');
         if (!ctx) return;
 
-        ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-
         if (Array.isArray(predictions) && predictions.length > 0 && Array.isArray(predictions[0].raw)) {
             const arr = predictions[0].raw;
             if (arr.length === 10) {
+                ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
                 const [cx1, cy1, w1, h1, r1, cx2, cy2, w2, h2, r2] = arr;
                 const scaleX = this.canvas.clientWidth;
                 const scaleY = this.canvas.clientHeight;
