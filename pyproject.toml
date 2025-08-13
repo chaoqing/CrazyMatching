@@ -1,20 +1,35 @@
 [project]
 name = "CrazyMatching"
 version = "0.1.0"
-description = "The Crazy Matching game"
+description = "The Crazy Matching Game"
 readme = "README.md"
 requires-python = "==3.10.*"
+
 dependencies = [
     "lxml>=6.0.0",
     "matplotlib==3.10.3",
     "numpy==1.26.4",
     "onnx>=1.18.0",
-    "onnx-tf>=1.10.0",
     "opencv-python==4.11.0.86",
     "pillow>=11.3.0",
     "scikit-learn==1.7.1",
+    "torch>=2.7.1",
+    "torchvision>=0.22.1",
+]
+
+[project.optional-dependencies]
+tf = [
+    "onnx-tf>=1.10.0",
     "tensorflow==2.15.1",
     "tensorflowjs==4.22.0",
-    "torch==2.7.1",
-    "torchvision==0.22.1",
 ]
+
+[tool.uv.sources]
+torch = [
+    { index = "jetson", marker = "sys_platform == 'linux' and platform_machine == 'aarch64'" },
+]
+
+[[tool.uv.index]]
+name = "jetson"
+url = "https://pypi.jetson-ai-lab.io/jp6/cu126"
+explicit = true
