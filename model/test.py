@@ -1,5 +1,3 @@
-
-
 import tensorflow as tf
 import numpy as np
 import cv2
@@ -10,6 +8,7 @@ import argparse
 # Constants from training
 IMG_HEIGHT = 224
 IMG_WIDTH = 224
+
 
 def draw_predicted_boxes(image, prediction):
     """
@@ -46,6 +45,7 @@ def draw_predicted_boxes(image, prediction):
         cv2.drawContours(output_image, [box_points], 0, color, thickness=2)
 
     return output_image
+
 
 def run_inference(model_path: Path, image_path: Path, output_dir: Path) -> None:
     """
@@ -86,19 +86,19 @@ def run_inference(model_path: Path, image_path: Path, output_dir: Path) -> None:
 
     # 3. Run prediction
     print("Running inference...")
-    
+
     # Convert numpy array to a TensorFlow tensor
     input_tensor = tf.constant(input_tensor, dtype=tf.float32)
 
     # Access the specific signature for inference
-    inference_fn = model.signatures['serving_default']
-    
+    inference_fn = model.signatures["serving_default"]
+
     # The output is a dictionary; get the tensor by its output layer name.
     # We dynamically get the first key, assuming there's only one output.
     prediction_dict = inference_fn(input_tensor)
-    output_key = list(prediction_dict.keys())[0] 
+    output_key = list(prediction_dict.keys())[0]
     prediction_tensor = prediction_dict[output_key]
-    
+
     # Convert tensor to numpy array and squeeze the batch dimension
     prediction_array = prediction_tensor.numpy().squeeze()
     print(f"Model prediction (normalized): {prediction_array}")
@@ -113,21 +113,20 @@ def run_inference(model_path: Path, image_path: Path, output_dir: Path) -> None:
     cv2.imwrite(str(output_path), output_image)
     print(f"\n✅ Inference complete. Result saved to: {output_path}")
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Run inference on an image using the trained Crazy Matching model.")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(
+        description="Run inference on an image using the trained Crazy Matching model."
+    )
     parser.add_argument(
-        '--image',
-        type=str,
-        required=True,
-        help="Path to the input image file."
+        "--image", type=str, required=True, help="Path to the input image file."
     )
     args = parser.parse_args()
 
     # Define paths
     base_dir = Path(__file__).parent
-    model_path = base_dir / 'saved_model' / 'my_custom_object_detection_model'
+    model_path = base_dir / "saved_model" / "my_custom_object_detection_model"
     image_path = Path(args.image)
-    output_dir = base_dir / 'test_output'
+    output_dir = base_dir / "test_output"
 
     run_inference(model_path, image_path, output_dir)
-
