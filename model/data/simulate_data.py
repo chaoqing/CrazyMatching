@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import random
 import json
+from tqdm import tqdm
 
 def extract_animal_images_auto(image_path, output_dir, min_area=500):
     """
@@ -44,7 +45,7 @@ def extract_animal_images_auto(image_path, output_dir, min_area=500):
 
     # --- Card and Background Extraction ---
     print("\nAttempting to extract cards and background...")
-    
+
     # Now that we have solid cards, we can find them as components.
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(otsu_mask, connectivity=8)
 
@@ -106,7 +107,7 @@ def extract_animal_images_auto(image_path, output_dir, min_area=500):
             print("Did not find two large enough components to be considered cards.")
     else:
         print("Not enough components found to extract cards (less than 3).")
-    
+
     # DEBUG: Save the object mask
     debug_mask_path = os.path.join(output_dir, "debug_object_mask.png")
     cv2.imwrite(debug_mask_path, object_mask)
@@ -125,7 +126,7 @@ def extract_animal_images_auto(image_path, output_dir, min_area=500):
     labeled_img = cv2.merge([label_hue, blank_ch, blank_ch])
     labeled_img = cv2.cvtColor(labeled_img, cv2.COLOR_HSV2BGR)
     labeled_img[label_hue==0] = 0 # Set background to black
-    
+
     debug_labeled_path = os.path.join(output_dir, "debug_labeled_components.png")
     cv2.imwrite(debug_labeled_path, labeled_img)
     print(f"Saved debug labeled components image to: {debug_labeled_path}")
@@ -175,7 +176,7 @@ def extract_animal_images_auto(image_path, output_dir, min_area=500):
 
         # Check if the component is an outlier
         is_outlier = not (lower_bound < area < upper_bound)
-        
+
         if is_outlier:
             outlier_count += 1
             file_prefix = "outlier_animal_"
@@ -202,11 +203,11 @@ def extract_animal_images_auto(image_path, output_dir, min_area=500):
 
         # Find the external contour of the component to fill any holes
         contours, _ = cv2.findContours(closed_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        
+
         # Create a new solid mask by drawing the filled contour
         solid_mask = np.zeros_like(component_mask)
         cv2.drawContours(solid_mask, contours, -1, (255), cv2.FILLED)
-        
+
         # Create a 4-channel image (BGRA) using the solid mask
         b, g, r = cv2.split(cropped_image)
         transparent_image = cv2.merge([b, g, r, solid_mask])
@@ -217,7 +218,7 @@ def extract_animal_images_auto(image_path, output_dir, min_area=500):
         print(f"Saved image to: {output_path}")
 
     print(f"\nExtraction complete. Found {extracted_count} valid components and {outlier_count} outliers.")
-    
+
     # DEBUG: Save the image with all bounding boxes
     debug_bbox_path = os.path.join(output_dir, "debug_bounding_boxes.png")
     cv2.imwrite(debug_bbox_path, debug_bbox_image)
@@ -261,7 +262,7 @@ def overlay_image(background, overlay, x, y):
 
     # Get the region of interest on the background
     roi = background[y1:y2, x1:x2]
-    
+
     # Crop the overlay image to match the clipped ROI
     overlay_cropped = overlay[overlay_y1:overlay_y2, overlay_x1:overlay_x2]
 
@@ -273,7 +274,7 @@ def overlay_image(background, overlay, x, y):
     # Split overlay into color and alpha channels
     b, g, r, a = cv2.split(overlay_cropped)
     overlay_rgb = cv2.merge((b, g, r))
-    
+
     # Normalize alpha mask to be between 0 and 1
     alpha = a / 255.0
     alpha = np.expand_dims(alpha, axis=2) # for broadcasting
@@ -284,129 +285,119 @@ def overlay_image(background, overlay, x, y):
     background[y1:y2, x1:x2] = blended_roi
     return background
 
+def scale_and_rotate(img: np.ndarray, scale_factor: float, angle: float):
+    h, w, *_ = img.shape
+    new_w, new_h = int(w * scale_factor), int(h * scale_factor)
+    img_scaled = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+
+    h, w = img_scaled.shape[:2]
+    center = (w // 2, h // 2)
+
+    m = cv2.getRotationMatrix2D(center, np.degrees(-angle) , 1.0)
+
+    cos = np.abs(m[0, 0])
+    sin = np.abs(m[0, 1])
+    new_w = int((h * sin) + (w * cos))
+    new_h = int((h * cos) + (w * sin))
+
+    m[0, 2] += (new_w / 2) - center[0]
+    m[1, 2] += (new_h / 2) - center[1]
+
+    img_rotated = cv2.warpAffine(img_scaled, m, (new_w, new_h), borderValue=(0, 0, 0, 0))
+
+    coords = cv2.findNonZero(img_rotated[:, :, 3])
+    if coords is not None:
+        x, y, w, h = cv2.boundingRect(coords)
+        return img_rotated[y:y + h, x:x + w]
+    else:
+        return img_rotated
+
 def generate_training_data(num_samples=100):
     """
     Generates simulated training data for the Crazy Matching game.
     This is a generator that yields one raw sample at a time.
     """
     data_dir = Path(__file__).parent
-    animal_paths = [p for p in (data_dir).glob('animal_*.png')]
-    background_path = data_dir / 'background.png'
-    
-    if not animal_paths:
-        print("Error: No animal images found in 'data'. Run the extraction first.")
-        return
-        
-    if not background_path.exists():
-        print(f"Error: Background image not found at {background_path}")
-        return
 
+    background_path = data_dir / 'background.png'
+    assert background_path.exists(), f"Error: Background image not found at {background_path}"
     background_img = cv2.imread(str(background_path))
-    if background_img is None:
-        print(f"Error: Could not read background image from {background_path}")
-        return
-        
+    assert background_img is not None, f"Error: Could not read background image from {background_path}"
     bg_h, bg_w, _ = background_img.shape
 
-    print(f"Starting data generation for {num_samples} samples...")
+    animal_imgs = {}
+    for p in data_dir.glob('animal_*.png'):
+        animal_img = cv2.imread(str(p), cv2.IMREAD_UNCHANGED)
+        assert animal_img is not None, f"Error: Can not read {p}"
+        assert animal_img.shape[2] == 4, f"Error: {p} does not have alpha channel"
+        coords = cv2.findNonZero(animal_img[:, :, 3])
+        assert coords is not None, f"Error: {p} does not have colored pixels"
+        x, y, w, h = cv2.boundingRect(coords)
+        animal_imgs[p.name.rstrip(".png")] = animal_img[y:y + h, x:x + w]
+    assert animal_imgs is not [], "Error: No animal images found in 'data'. Run the extraction first."
 
+    animal_names = tuple(animal_imgs.keys())
     for i in range(num_samples):
+        selected_animal_paths = random.sample(animal_names, 9)
+        duplicated_animal_path = selected_animal_paths[0]
+
+        animal_patchs = []
+        for animal in selected_animal_paths+[duplicated_animal_path]:
+            scale = random.uniform(0.5, 1.0)
+            rotation = random.uniform(-np.pi, np.pi)
+
+            animal_patchs.append((scale_and_rotate(animal_imgs[animal], scale, rotation), animal, scale, rotation))
+
         # Create a fresh copy of the background for each sample
         sample_image = background_img.copy()
 
-        # 1. Generate 10 random, non-overlapping rectangles
         rectangles = []
         attempts = 0
-        while len(rectangles) < 10 and attempts < 500:
+        while len(animal_patchs) > 0 and attempts < 500:
             attempts += 1
-            # Define rectangle properties
-            scale = random.uniform(0.5, 1.0) # Smaller scale for more items
-            rotation = random.uniform(-np.pi, np.pi) 
-            
+
             # Use a fixed size for simplicity, scaled by the random factor
-            rect_w = int(350 * scale)
-            rect_h = int(350 * scale)
-            
+            rect_h, rect_w  = animal_patchs[-1][0].shape[:2]
+
             # Randomly position the center, ensuring it's not too close to the edge
             center_x = random.randint(rect_w, bg_w - rect_w)
             center_y = random.randint(rect_h, bg_h - rect_h)
-            
+
             # Simple collision detection
             is_overlapping = False
             for r in rectangles:
-                dist = np.sqrt((center_x - r['center_x'])**2 + (center_y - r['center_y'])**2)
-                if dist < (rect_w + r['w']) / 1.5: # Looser check
+                location = r['location']
+                dist = np.sqrt((center_x - location['center_x'])**2 + (center_y - location['center_y'])**2)
+                if dist < (rect_w + location['w']) / 1.5: # Looser check
                     is_overlapping = True
                     break
-            
+
             if not is_overlapping:
-                rectangles.append({
-                    'center_x': center_x, 'center_y': center_y,
-                    'w': rect_w, 'h': rect_h,
-                    'scale': scale, 'rotation': rotation
-                })
+                animal_img, animal, scale, rotation = animal_patchs.pop()
+                overlay_image(sample_image, animal_img,
+                              center_x - rect_w // 2,
+                              center_y - rect_h // 2)
+
+                rectangles.append({'location':
+                                       {'center_x': center_x, 'center_y': center_y,
+                                    'w': rect_w, 'h': rect_h,
+                                    },
+                                       'transform':
+                                       {
+                                    "scale": scale, 
+                                    'rotation': rotation
+                                    },
+                                   'label': animal
+                                   }
+                )
 
         if len(rectangles) < 10:
             print(f"Warning: Could only place {len(rectangles)} non-overlapping rectangles for sample {i}.")
             continue
 
-        # 2. Sort rectangles by position
-        rectangles.sort(key=lambda r: (r['center_y'], r['center_x']))
+        yield sample_image, rectangles
 
-        # 3. Select animals
-        selected_animal_paths = random.sample(animal_paths, 9)
-        
-        # 4. Pick one animal to duplicate
-        duplicated_animal_path = random.choice(selected_animal_paths)
-        
-        animals_to_place = selected_animal_paths + [duplicated_animal_path]
-        random.shuffle(animals_to_place)
-
-        # 5. Place animals on the background
-        placed_animal_info = []
-
-        for rect, animal_path in zip(rectangles, animals_to_place):
-            animal_img = cv2.imread(str(animal_path), cv2.IMREAD_UNCHANGED)
-            if animal_img is None: continue
-
-            # Resize animal
-            resized_animal = cv2.resize(animal_img, (rect['w'], rect['h']))
-
-            # Rotate the animal
-            (h, w) = resized_animal.shape[:2]
-            center = (w // 2, h // 2)
-            rotation_matrix = cv2.getRotationMatrix2D(center, np.degrees(rect['rotation']), 1.0)
-            
-            cos = np.abs(rotation_matrix[0, 0])
-            sin = np.abs(rotation_matrix[0, 1])
-            new_w_rot = int((h * sin) + (w * cos))
-            new_h_rot = int((h * cos) + (w * sin))
-            
-            rotation_matrix[0, 2] += (new_w_rot / 2) - center[0]
-            rotation_matrix[1, 2] += (new_h_rot / 2) - center[1]
-
-            rotated_animal = cv2.warpAffine(resized_animal, rotation_matrix, (new_w_rot, new_h_rot))
-
-            paste_x = rect['center_x'] - new_w_rot // 2
-            paste_y = rect['center_y'] - new_h_rot // 2
-            
-            overlay_image(sample_image, rotated_animal, paste_x, paste_y)
-
-            placed_animal_info.append({'path': animal_path, 'rect': rect})
-
-        # 6. Find the two duplicated animals and create the label
-        duplicated_rects = [info['rect'] for info in placed_animal_info if info['path'] == duplicated_animal_path]
-        
-        if len(duplicated_rects) == 2:
-            r1, r2 = duplicated_rects[0], duplicated_rects[1]
-            label = [
-                r1['center_x']/bg_w, r1['center_y']/bg_h, r1['w']/bg_w, r1['h']/bg_h, (r1['rotation'] + np.pi) / (2 * np.pi),
-                r2['center_x']/bg_w, r2['center_y']/bg_h, r2['w']/bg_w, r2['h']/bg_h, (r2['rotation'] + np.pi) / (2 * np.pi)
-            ]
-            
-            yield sample_image, label
-
-def create_dataset(output_dir, num_samples=100, image_size=(224, 224), save_raw=False):
+def create_dataset(output_dir, num_samples=100, image_size=(320, 320), save_raw=False, only_pair=True):
     """
     Creates a dataset by calling the data generator, processing the data,
     and saving it to disk.
@@ -422,83 +413,101 @@ def create_dataset(output_dir, num_samples=100, image_size=(224, 224), save_raw=
     os.makedirs(labels_dir, exist_ok=True)
 
     images_batch = []
+    location_batch = []
     labels_batch = []
 
-    print(f"Creating dataset with {num_samples} samples...")
-    data_generator = generate_training_data(num_samples=num_samples)
+    data_generator = tqdm(generate_training_data(num_samples=num_samples),
+                          total=num_samples,
+                          desc=f"Dataset samples")
 
     for i, (image, label) in enumerate(data_generator):
         if save_raw:
             image_filename = f"sample_{i:04d}.png"
             label_filename = f"sample_{i:04d}.json"
-            
+
             cv2.imwrite(str(images_dir / image_filename), image)
             with open(labels_dir / label_filename, 'w') as f:
-                json.dump({'label': label}, f)
+                json.dump(label, f, indent=2)
 
         # Resize image for the training batch
         resized_image = cv2.resize(image, image_size)
         images_batch.append(resized_image)
-        
+
         # Append the label
-        labels_batch.append(label)
-        
-        if (i + 1) % 10 == 0:
-            print(f"  Processed {i + 1}/{num_samples} samples...")
+
+        if only_pair:
+            label = label[::9]
+
+        locations = np.array([list(i["location"].values()) for i in label], dtype=np.float32)
+        locations[:,0::2] *= image_size[1]/image.shape[1]
+        locations[:,1::2] *= image_size[0]/image.shape[0]
+
+        location_batch.append(locations)
+        labels_batch.append([i["label"] for i in label])
 
     # Convert lists to NumPy arrays
     X_train = np.array(images_batch)
-    y_train = np.array(labels_batch)
+    y_train = np.array(location_batch)
+    c_train = np.array(labels_batch)
 
     # Normalize image data
-    X_train = X_train.astype('float32') / 255.0
+    X_train = X_train.astype('float32')
+    y_train = y_train.astype('float32')
 
     # Save the NumPy arrays
     X_train_path = output_dir / 'X_train.npy'
     y_train_path = output_dir / 'y_train.npy'
-    
+    c_train_path = output_dir / 'c_train.npy'
+
     np.save(X_train_path, X_train)
     np.save(y_train_path, y_train)
+    np.save(c_train_path, c_train)
 
     print("\nDataset creation complete.")
     print(f"  - Shape of image data (X_train): {X_train.shape}")
-    print(f"  - Shape of label data (y_train): {y_train.shape}")
+    print(f"  - Shape of location data (y_train): {y_train.shape}")
+    print(f"  - Shape of label data (c_train): {c_train.shape}")
     print(f"Original images saved in: '{images_dir}'")
     print(f"Training data saved as '{X_train_path}' and '{y_train_path}'")
 
 
-def debug_training_data(image_path, label_path, output_path, image_size=(224, 224)):
+def debug_training_data(image_path, label_path, output_path):
     """
     Reads a training sample and its label, and draws the bounding boxes on the image
     to visually verify the data. Also saves a resized version for inspection.
     """
-    # Load the image
-    image = cv2.imread(str(image_path))
-    if image is None:
-        print(f"Error: Could not load image from {image_path}")
-        return
-    
-    # Load the label
-    with open(label_path, 'r') as f:
-        label_data = json.load(f)['label']
 
-    img_h, img_w, _ = image.shape
+    if image_path.name.endswith('.npy'):
+        # If the image is a NumPy array, load it
+        images = np.load(image_path)
+        ith_image = np.random.choice(range(images.shape[0]))  # Randomly select one image
+        image = images[ith_image]
+
+        label_data = [{'location': {'center_x': i[0], 'center_y': i[1], 'w': i[2], 'h': i[3], },
+                  'transform': {'rotation': 0.}} for i in np.load(label_path)[ith_image]]
+    else:
+        # Load the image
+        image = cv2.imread(str(image_path))
+        if image is None:
+            print(f"Error: Could not load image from {image_path}")
+            return
+
+        # Load the label
+        with open(label_path, 'r') as f:
+            label_data = json.load(f)
+
     debug_image = image.copy()
 
-    # Extract the two bounding box details
-    box1_data = label_data[0:5]
-    box2_data = label_data[5:10]
-
-    for i, box_data in enumerate([box1_data, box2_data]):
+    for i, label in enumerate(label_data):
+        box_data = label['location']
         # Denormalize the coordinates
-        center_x = box_data[0] * img_w
-        center_y = box_data[1] * img_h
-        w = box_data[2] * img_w
-        h = box_data[3] * img_h
-        
-        # Denormalize rotation from [0, 1] back to [-pi, pi]
-        rotation_rad = (box_data[4] * 2 * np.pi) - np.pi
-        rotation_deg = np.degrees(rotation_rad)
+        center_x = box_data['center_x']
+        center_y = box_data['center_y']
+        w = box_data['w']
+        h = box_data['h']
+
+        rotation_rad = label['transform']['rotation']
+        rotation_deg = 0 # np.degrees(rotation_rad)
 
         # Get the 4 corners of the rotated rectangle
         box_points = cv2.boxPoints(((center_x, center_y), (w, h), rotation_deg))
@@ -513,20 +522,29 @@ def debug_training_data(image_path, label_path, output_path, image_size=(224, 22
     cv2.imwrite(str(output_path), debug_image)
     print(f"Saved debug image with bounding boxes to: {output_path}")
 
-    # Save the resized debug image to see what the model sees
-    resized_debug_image = cv2.resize(debug_image, image_size)
-    p = Path(output_path)
-    resized_output_path = p.parent / f"{p.stem}_resized{p.suffix}"
-    cv2.imwrite(str(resized_output_path), resized_debug_image)
-    print(f"Saved RESIZED debug image to: {resized_output_path}")
-
 
 if __name__ == '__main__':
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Generate simulated training data for TFOD.")
+    parser.add_argument('--num_samples', type=int, default=100,
+                        help='Number of samples to generate.')
+    parser.add_argument('--save_raw', action="store_true",
+                        default=False,
+                        help='Also save the raw image before resizing.')
+    parser.add_argument('--only_pair', action="store_true",
+                        default=False,
+                        help='The output will be only the first and last same pair animals.')
+    parser.add_argument('--output_base_dir', type=str,
+                        default=str(Path(__file__).parent / 'training_data'),
+                        help='Base directory for output images, annotations, and debug_output.')
+    args = parser.parse_args()
+
     # --- IMPORTANT ---
     # Ensure you have opencv-python installed:
     # pip install opencv-python numpy
     # -----------------
-    
+
     # --- Part 1: Extract animal assets from a source image ---
     # This part is for initial asset creation.
     # Uncomment and run this first if you don't have the animal images.
@@ -540,18 +558,19 @@ if __name__ == '__main__':
     # --- Part 2: Generate simulated training data ---
     # This part uses the extracted assets to create training samples.
     print("--- Running Step 2: Generating Training Data ---")
-    output_directory_sim = Path(__file__).parent / 'training_data'
-    create_dataset(output_directory_sim, num_samples=2000, save_raw=1==0) # Generate 50 samples for testing
+    output_directory_sim = Path(args.output_base_dir)
+    create_dataset(output_directory_sim, num_samples=args.num_samples, save_raw=args.save_raw, only_pair=args.only_pair) # Generate 50 samples for testing
     print("\n--- Finished Step 2 ---")
-
 
     # --- Part 3: Debug and verify a training sample ---
     print("\n--- Running Step 3: Debugging a Training Sample ---")
-    sim_dir = Path(__file__).parent / 'training_data'
+    sim_dir = output_directory_sim
     image_files = list((sim_dir / 'images').glob('*.png'))
-    
-    if not image_files:
-        print("No training images found. Please run Step 2 to generate data first.")
+
+    if not image_files: 
+        for i in range(5):
+            debug_output_path = Path(__file__).parent / 'debug_output' / f"sample_{i:02}.png"
+            debug_training_data(sim_dir/"X_train.npy", sim_dir/"y_train.npy", debug_output_path)
     else:
         # Pick a random image to debug
         random_image_path = random.choice(image_files)

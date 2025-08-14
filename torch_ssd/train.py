@@ -6,6 +6,7 @@ from model import create_ssd_model
 import os
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+from tqdm import tqdm
 from torchvision.ops import box_iou # Import box_iou
 from evaluate import evaluate_model # Import the new evaluate_model
 
@@ -27,7 +28,7 @@ def train_model(num_epochs=10, batch_size=4, learning_rate=0.001, data_root="./d
     print(f"Loaded training dataset with {len(dataset)} samples.")
 
     # For evaluation, use a separate dataset without data augmentation
-    eval_dataset = PascalVOCDataset(os.path.join(data_root), get_transform(train=False))
+    eval_dataset = PascalVOCDataset(os.path.join(data_root), get_transform(train=False), train=False)
     print(f"Loaded evaluation dataset with {len(eval_dataset)} samples.")
 
     # 2. Create Model
@@ -45,7 +46,7 @@ def train_model(num_epochs=10, batch_size=4, learning_rate=0.001, data_root="./d
     for epoch in range(num_epochs):
         model.train()
         total_loss = 0
-        for i, (images, targets) in enumerate(data_loader):
+        for i, (images, targets) in tqdm(enumerate(data_loader), desc=f"Epoch {epoch+1}/{num_epochs}", total=len(data_loader)):
             images = list(image.to(device) for image in images)
             targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
 
@@ -57,9 +58,6 @@ def train_model(num_epochs=10, batch_size=4, learning_rate=0.001, data_root="./d
             optimizer.step()
 
             total_loss += losses.item()
-
-            if (i + 1) % 10 == 0:
-                print(f"Epoch: {epoch+1}/{num_epochs}, Batch: {i+1}/{len(data_loader)}, Loss: {losses.item():.4f}")
         
         lr_scheduler.step()
         print(f"Epoch {epoch+1} finished. Average Loss: {total_loss / len(data_loader):.4f}")
@@ -113,7 +111,7 @@ if __name__ == '__main__':
     parser.add_argument('--num_epochs', type=int, default=50, help='Number of training epochs.')
     parser.add_argument('--batch_size', type=int, default=50, help='Batch size for training.')
     parser.add_argument('--learning_rate', type=float, default=0.001, help='Learning rate for optimizer.')
-    parser.add_argument('--data_root', type=str, default='./data', help='Root directory for dataset.')
+    parser.add_argument('--data_root', type=str, default='trainning_data', help='Root directory for dataset.')
     parser.add_argument('--save_path', type=str, default='./ssd_model.pth', help='Path to save the trained model.')
     parser.add_argument('--export_onnx', action='store_true', help='Export the trained model to ONNX format.')
     parser.add_argument('--onnx_output_path', type=str, default='./ssd_model.onnx', help='Path to save the ONNX model.')
@@ -121,13 +119,13 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # Ensure data is generated before training
-    data_gen_script = "./tfod_coco_ssd/data/generate_tfod_data.py"
-    data_output_dir = os.path.join("./torch_ssd", args.data_root)
+    data_gen_script = "./model/data/simulate_data.py"
+    data_output_dir = os.path.join("./model/data/", args.data_root)
     
-    if not os.path.exists(os.path.join(data_output_dir, "images")) or \
-       not os.path.exists(os.path.join(data_output_dir, "annotations")):
+    if not os.path.exists(os.path.join(data_output_dir, "images")):
         print(f"Data not found in {data_output_dir}. Generating {args.num_samples} samples...")
-        os.system(f"uv run python {data_gen_script} --num_samples {args.num_samples} --output_base_dir {data_output_dir}")
+        print(f"uv run python {data_gen_script} --num_samples {args.num_samples} --output_base_dir {data_output_dir}")
+        exit(1)
     
     # Train the model
     train_model(num_epochs=args.num_epochs,

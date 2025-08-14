@@ -7,6 +7,7 @@ from torchvision.ops import nms, box_iou # Import box_iou
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from PIL import Image
+from tqdm import tqdm
 
 # Helper function to collate data for DataLoader
 def collate_fn(batch):
@@ -26,7 +27,7 @@ def evaluate_model(model, dataset, device, score_threshold=0.5, iou_threshold=0.
     results = [] # To store results for visualization
 
     with torch.no_grad():
-        for i, (images, targets) in enumerate(data_loader):
+        for i, (images, targets) in tqdm(enumerate(data_loader), desc="Evaluating", total=len(data_loader)):
             images = list(image.to(device) for image in images)
             outputs = model(images)
 
