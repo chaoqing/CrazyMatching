@@ -70,7 +70,9 @@ class _PascalVOCDataset(data.Dataset):
 
     def __getitem__(self, idx):
         if self.train:
-            img = T.ToTensor()(self.images[idx])
+            import cv2
+
+            img = T.ToTensor()(cv2.cvtColor(self.images[idx], cv2.COLOR_BGR2RGB))
             boxes = torch.as_tensor(self.locations[idx], dtype=torch.float32)
             labels = torch.as_tensor(self.labels[idx], dtype=torch.int64)
             target = dict(boxes=boxes, labels=labels, image_id=torch.tensor([idx]))

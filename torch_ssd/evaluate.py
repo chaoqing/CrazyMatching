@@ -4,6 +4,7 @@ from data_utils import PascalVOCDataset, get_transform, CLASSES
 from model import create_ssd_model
 import os
 from torchvision.ops import nms, box_iou  # Import box_iou
+from torchmetrics.detection import MeanAveragePrecision
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from PIL import Image
@@ -28,12 +29,15 @@ def evaluate_model(
     total_gt_boxes = 0
 
     results = []  # To store results for visualization
+    metrics = MeanAveragePrecision(box_format="xyxy", iou_type="bbox")
+    metrics.to(device)
 
     with torch.no_grad():
         for i, (images, targets) in tqdm(
             enumerate(data_loader), desc="Evaluating", total=len(data_loader)
         ):
             images = list(image.to(device) for image in images)
+            targets = [{k: v.to(device) for k, v in t.items()} for t in targets]
             outputs = model(images)
 
             for j, output in enumerate(outputs):
@@ -76,11 +80,19 @@ def evaluate_model(
                         "gt_labels": targets[j]["labels"].cpu().numpy(),
                     }
                 )
+            metrics.update(outputs, targets)
+    results = [
+        f"{k}={v.numpy().item(): .4f}"
+        for k, v in metrics.compute().items()
+        if v.numel() == 1
+    ]
 
     print("Evaluation complete.")
 
     average_iou = total_iou_sum / total_gt_boxes if total_gt_boxes > 0 else 0.0
-    print(f"Average IoU (predictions vs. ground truth): {average_iou:.4f}")
+    print(
+        f"{', '.join(results)} Average IoU (predictions vs. ground truth): {average_iou:.4f}"
+    )
 
     # Optional: Visualize some predictions
     print("Visualizing a few predictions...")

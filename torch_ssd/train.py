@@ -45,6 +45,9 @@ def train_model(
 
     # 2. Create Model
     model = create_ssd_model(num_classes=len(CLASSES), pretrained=True)
+    if os.path.exists(save_path):
+        print(f"Loading existing model weights from {save_path}")
+        model.load_state_dict(torch.load(save_path, map_location=device))
     model.to(device)
     print("Created SSD model.")
 
@@ -57,6 +60,13 @@ def train_model(
     print("Starting training...")
     for epoch in range(num_epochs):
         model.train()
+
+        def disable_bn_stats(module):
+            if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
+                module.eval()
+
+        model.apply(disable_bn_stats)
+
         total_loss = 0
         for i, (images, targets) in tqdm(
             enumerate(data_loader),
