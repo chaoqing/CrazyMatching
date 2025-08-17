@@ -44,6 +44,8 @@ def convert_pytorch_to_onnx():
     # dummy_input = torch.randn(1, 3, 320, 320).to(device)
     w, h = 320, 320  # SSDLite input size
     dummy_input = read_torchvision_dummy_input((w, h)).to(device)
+    dummy_output, = model.forward(dummy_input)
+    print(f"Dummy output: {dummy_output}")
 
     torch.onnx.export(
         model,
@@ -52,12 +54,12 @@ def convert_pytorch_to_onnx():
         opset_version=11,
         do_constant_folding=True,
         input_names=["input"],
-        output_names=["boxes", "scores", "labels"],
+        output_names=list(dummy_output.keys()),
         dynamic_axes={
             "input": {0: "batch_size"},
             "boxes": {0: "num_detections"},
-            "scores": {0: "num_detections"},
             "labels": {0: "num_detections"},
+            "scores": {0: "num_detections"},
         },
     )
     print(f"PyTorch model exported to ONNX at {ONNX_MODEL_PATH}")
@@ -99,7 +101,7 @@ def example_onnx_run():
         print(f"{name}: {output.shape}")
         print(output)
 
-    for i, (boxes, scores, labels) in enumerate(zip(*outputs)):
+    for i, (boxes, *_) in enumerate(zip(*outputs)):
         xmin, ymin, xmax, ymax = boxes
         xmin *= img_w / w
         ymin *= img_h / h
