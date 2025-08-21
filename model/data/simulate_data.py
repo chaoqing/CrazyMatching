@@ -379,7 +379,8 @@ def generate_training_data(num_samples=100):
 
     animal_names = tuple(animal_imgs.keys())
     for i in range(num_samples):
-        selected_animal_paths = random.sample(animal_names, 9)
+        num_rectanges = random.choice(range(7, 15))+1
+        selected_animal_paths = random.sample(animal_names, num_rectanges-1)
         duplicated_animal_path = selected_animal_paths[0]
 
         animal_patchs = []
@@ -445,7 +446,7 @@ def generate_training_data(num_samples=100):
                     }
                 )
 
-        if len(rectangles) < 10:
+        if len(rectangles) < num_rectanges:
             print(
                 f"Warning: Could only place {len(rectangles)} non-overlapping rectangles for sample {i}."
             )
@@ -544,7 +545,7 @@ def create_dataset(
         # Append the label
 
         if only_pair:
-            label = label[::9]
+            label = label[::(len(label)-1)]
 
         locations = np.array(
             [list(i["location"].values()) for i in label], dtype=np.float32
@@ -555,30 +556,31 @@ def create_dataset(
         location_batch.append(locations)
         labels_batch.append([i["label"] for i in label])
 
-    # Convert lists to NumPy arrays
-    X_train = np.array(images_batch)
-    y_train = np.array(location_batch)
-    c_train = np.array(labels_batch)
+    if only_pair: 
+        # Convert lists to NumPy arrays
+        X_train = np.array(images_batch)
+        y_train = np.array(location_batch)
+        c_train = np.array(labels_batch)
 
-    # Normalize image data
-    X_train = X_train.astype("float32")
-    y_train = y_train.astype("float32")
+        # Normalize image data
+        X_train = X_train.astype("float32")
+        y_train = y_train.astype("float32")
 
-    # Save the NumPy arrays
-    X_train_path = output_dir / "X_train.npy"
-    y_train_path = output_dir / "y_train.npy"
-    c_train_path = output_dir / "c_train.npy"
+        # Save the NumPy arrays
+        X_train_path = output_dir / "X_train.npy"
+        y_train_path = output_dir / "y_train.npy"
+        c_train_path = output_dir / "c_train.npy"
 
-    np.save(X_train_path, X_train)
-    np.save(y_train_path, y_train)
-    np.save(c_train_path, c_train)
+        np.save(X_train_path, X_train)
+        np.save(y_train_path, y_train)
+        np.save(c_train_path, c_train)
 
-    print("\nDataset creation complete.")
-    print(f"  - Shape of image data (X_train): {X_train.shape}")
-    print(f"  - Shape of location data (y_train): {y_train.shape}")
-    print(f"  - Shape of label data (c_train): {c_train.shape}")
-    print(f"Original images saved in: '{images_dir}'")
-    print(f"Training data saved as '{X_train_path}' and '{y_train_path}'")
+        print("\nDataset creation complete.")
+        print(f"  - Shape of image data (X_train): {X_train.shape}")
+        print(f"  - Shape of location data (y_train): {y_train.shape}")
+        print(f"  - Shape of label data (c_train): {c_train.shape}")
+        print(f"Original images saved in: '{images_dir}'")
+        print(f"Training data saved as '{X_train_path}' and '{y_train_path}'")
 
 
 def debug_training_data(image_path, label_path, output_path):
