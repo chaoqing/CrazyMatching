@@ -96,6 +96,10 @@ train: install-python-deps
 	@echo "Training the custom model..."
 	uv run python $(TRAIN_SCRIPT) --load-weights --export-model
 
+train-yolo:
+	test -d model/data/training_data/images/ || uv run model/data/simulate_data.py --num_samples 1000 --save_raw --yolo
+	uv run model/train_yolov11n.py --run_name yolov11n_finetune6
+
 simulate:
 	@rm -rf $(MODEL_DIR)/data/extracted_animals
 	uv run python $(MODEL_DIR)/data/simulate_data.py

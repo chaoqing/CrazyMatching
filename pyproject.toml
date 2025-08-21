@@ -36,3 +36,8 @@ torch = [
 name = "jetson"
 url = "https://pypi.jetson-ai-lab.io/jp6/cu126"
 explicit = true
+
+[dependency-groups]
+dev = [
+    "ultralytics>=8.3.180",
+]

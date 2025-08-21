@@ -451,11 +451,16 @@ def generate_training_data(num_samples=100):
             )
             continue
 
-        yield sample_image, rectangles
+        yield sample_image, rectangles, animal_names, animal_imgs
 
 
 def create_dataset(
-    output_dir, num_samples=100, image_size=(320, 320), save_raw=False, only_pair=True
+    output_dir,
+    num_samples=100,
+    image_size=(320, 320),
+    save_raw=False,
+    only_pair=True,
+    yolo_format=False,
 ):
     """
     Creates a dataset by calling the data generator, processing the data,
@@ -481,7 +486,15 @@ def create_dataset(
         desc=f"Dataset samples",
     )
 
-    for i, (image, label) in enumerate(data_generator):
+    for i, (image, label, animal_names, animal_imgs) in enumerate(data_generator):
+        if i == 0: # Only create class_name_to_id once
+            class_names = sorted(list(animal_imgs.keys()))
+            class_name_to_id = {name: idx for idx, name in enumerate(class_names)}
+            # Optionally save class_names to a file for later use with YOLO model
+            with open(output_dir / "classes.txt", "w") as f:
+                for name in class_names:
+                    f.write(f"{name}\n")
+
         if save_raw:
             image_filename = f"sample_{i:04d}.png"
             label_filename = f"sample_{i:04d}.json"
@@ -489,6 +502,40 @@ def create_dataset(
             cv2.imwrite(str(images_dir / image_filename), image)
             with open(labels_dir / label_filename, "w") as f:
                 json.dump(label, f, indent=2)
+
+        if yolo_format:
+            # Define a mapping from animal names to class IDs
+            # This should ideally be consistent and loaded from a config file
+            # For this prototype, we'll generate it dynamically based on found animals
+            class_names = sorted(list(animal_imgs.keys()))
+            class_name_to_id = {name: idx for idx, name in enumerate(class_names)}
+
+            yolo_label_filename = f"sample_{i:04d}.txt"
+            with open(labels_dir / yolo_label_filename, "w") as f:
+                for obj in label:
+                    # Original bounding box coordinates
+                    x_center_abs = obj["location"]["center_x"]
+                    y_center_abs = obj["location"]["center_y"]
+                    width_abs = obj["location"]["w"]
+                    height_abs = obj["location"]["h"]
+
+                    # Normalize coordinates by image dimensions
+                    # Use the original image dimensions for normalization
+                    img_h, img_w, _ = image.shape
+                    x_center_norm = x_center_abs / img_w
+                    y_center_norm = y_center_abs / img_h
+                    width_norm = width_abs / img_w
+                    height_norm = height_abs / img_h
+
+                    class_id = class_name_to_id.get(obj["label"], -1) # Get class ID, -1 if not found
+
+                    if class_id != -1:
+                        f.write(
+                            f"{class_id} {x_center_norm:.6f} {y_center_norm:.6f} "
+                            f"{width_norm:.6f} {height_norm:.6f}\n"
+                        )
+                    else:
+                        print(f"Warning: Unknown class label '{obj['label']}' for YOLO format.")
 
         # Resize image for the training batch
         resized_image = cv2.resize(image, image_size)
@@ -627,6 +674,12 @@ if __name__ == "__main__":
         default=str(Path(__file__).parent / "training_data"),
         help="Base directory for output images, annotations, and debug_output.",
     )
+    parser.add_argument(
+        "--yolo",
+        action="store_true",
+        default=False,
+        help="Generate labels in YOLO format (.txt files).",
+    )
     args = parser.parse_args()
 
     # --- IMPORTANT ---
@@ -652,6 +705,7 @@ if __name__ == "__main__":
         num_samples=args.num_samples,
         save_raw=args.save_raw,
         only_pair=args.only_pair,
+        yolo_format=args.yolo,
     )  # Generate 50 samples for testing
     print("\n--- Finished Step 2 ---")
 
