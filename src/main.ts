@@ -22,7 +22,7 @@ class Main {
     private tfjsModel: Model;
     private onnxModel: SSDModel;
     private currentModel: Model | SSDModel;
-    private activeModelType: 'tfjs' | 'onnx' = 'onnx'; // Default to tfjs model
+    private activeModelType: 'tfjs' | 'onnx' = 'tfjs'; // Default to tfjs model
     private isDetecting: boolean = false;
     private videoDevices: MediaDeviceInfo[] = [];
     private currentStream: MediaStream | null = null;
@@ -32,7 +32,7 @@ class Main {
         this.canvas = document.getElementById('canvas') as HTMLCanvasElement;
         this.tfjsModel = new Model();
         this.onnxModel = new SSDModel();
-        this.currentModel = this.onnxModel;
+        this.currentModel = this.activeModelType === 'tfjs' ? this.tfjsModel : this.onnxModel;
 
         const toggleBtn = document.getElementById('toggle-algo') as HTMLButtonElement;
         if (toggleBtn) {
@@ -185,14 +185,20 @@ class Main {
         const ctx = this.canvas.getContext('2d');
         if (!ctx) return;
 
-        if (Array.isArray(predictions) && predictions.length > 0 && Array.isArray(predictions[0].raw)) {
-            const arr = predictions[0].raw;
-            if (arr.length === 10) {
-                ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        if (Array.isArray(predictions) && predictions.length > 0) {
+            ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+            const scaleX = this.canvas.clientWidth;
+            const scaleY = this.canvas.clientHeight;
 
-                const [cx1, cy1, w1, h1, r1, cx2, cy2, w2, h2, r2] = arr;
-                const scaleX = this.canvas.clientWidth;
-                const scaleY = this.canvas.clientHeight;
+            // Plot all bboxes with dashed lines
+            if (predictions[0].allBboxes && predictions[0].allBboxes.length > 0) {
+                predictions[0].allBboxes.forEach(bbox => {
+                    drawRotatedRect(ctx, bbox.cx * scaleX, bbox.cy * scaleY, bbox.w * scaleX, bbox.h * scaleY, bbox.r, '#FFFF00', true);
+                });
+            }
+
+            if (predictions[0].success && Array.isArray(predictions[0].raw) && predictions[0].raw.length === 10) {
+                const [cx1, cy1, w1, h1, r1, cx2, cy2, w2, h2, r2] = predictions[0].raw;
                 drawRotatedRect(ctx, cx1 * scaleX, cy1 * scaleY, w1 * scaleX, h1 * scaleY, r1, '#00FFFF');
                 ctx.fillText('1', cx1 * scaleX, cy1 * scaleY);
                 drawRotatedRect(ctx, cx2 * scaleX, cy2 * scaleY, w2 * scaleX, h2 * scaleY, r2, '#FF00FF');
@@ -207,12 +213,17 @@ class Main {
 const main = new Main();
 main.run();
 
-function drawRotatedRect(ctx: CanvasRenderingContext2D, cx: number, cy: number, w: number, h: number, angle: number, color: string) {
+function drawRotatedRect(ctx: CanvasRenderingContext2D, cx: number, cy: number, w: number, h: number, angle: number, color: string, isDashed: boolean = false) {
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate(angle);
     ctx.strokeStyle = color;
     ctx.lineWidth = 4;
+    if (isDashed) {
+        ctx.setLineDash([5, 5]);
+    } else {
+        ctx.setLineDash([]);
+    }
     ctx.strokeRect(-w/2, -h/2, w, h);
     ctx.restore();
 }

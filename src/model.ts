@@ -24,6 +24,7 @@ import * as ort from 'onnxruntime-web';
 export interface ModelDetectResult {
     raw: number[];
     success: boolean;
+    allBboxes: { cx: number; cy: number; w: number; h: number; r: number; }[];
 }
 
 export class Model {
@@ -46,11 +47,26 @@ export class Model {
             return [];
         }
 
-        const imgTensor = tf.browser.fromPixels(input);
+        let xRatio = 0.;
+        let yRatio = 0.;
+
+        const img = tf.browser.fromPixels(input);
+        const [h, w] = img.shape.slice(0, 2); // get source width and height
+        const maxSize = Math.max(w, h); // get max size
+        const imgTensor = tf.pad(img, [
+            [0, maxSize - h], // padding y [bottom only]
+            [0, maxSize - w], // padding x [right only]
+            [0, 0],
+        ]);
+
+        xRatio =  640 / maxSize; // update xRatio
+        yRatio = 640 / maxSize; // update yRatio
+        console.log("ratio: ", xRatio, yRatio)
+
         // Depending on your model's input requirements, you might need to resize,
         // normalize, or expand dimensions of the image tensor.
         // Example: Resize to model's expected input size (e.g., 300x300 for SSD)
-        const resized = tf.image.resizeBilinear(imgTensor, [224, 224]); // 修正为模型要求的输入尺寸
+        const resized = tf.image.resizeBilinear(imgTensor, [640, 640]); // 修正为模型要求的输入尺寸
         const expanded = resized.expandDims(0); // Add batch dimension
         const normalized = expanded.div(255.0); // Normalize to [0, 1] if your model expects it
 
@@ -58,47 +74,142 @@ export class Model {
         // The output of your custom model will be raw tensors.
         // You need to know the names of your model's output tensors.
         // Common names for object detection are 'detection_boxes', 'detection_scores', 'detection_classes', 'num_detections'.
-        const predictions = this.model.execute(normalized);
-        let bboxPrediction: tf.Tensor;
-        if (Array.isArray(predictions)) {
-            if (!predictions[0]) {
-                console.error('模型推理结果为空或格式不正确:', predictions);
-                tf.dispose([imgTensor, resized, expanded, normalized]);
-                return [];
-            }
-            bboxPrediction = predictions[0].squeeze();
-        } else if (predictions instanceof tf.Tensor) {
-            bboxPrediction = predictions.squeeze();
-        } else {
-            console.error('模型推理结果类型未知:', predictions);
-            tf.dispose([imgTensor, resized, expanded, normalized]);
-            return [];
-        }
-        const bboxCoords = bboxPrediction.arraySync() as number[];
+        const model_results = this.model.execute(normalized);
+        const numClass = 15;
+        const transRes = tf.transpose(model_results, [0, 2, 1]); // transpose result [b, det, n] => [b, n, det]
+        const boxes = tf.tidy(() => {
+            const w = transRes.slice([0, 0, 2], [-1, -1, 1]); // get width
+            const h = transRes.slice([0, 0, 3], [-1, -1, 1]); // get height
+            const x1 = tf.sub(transRes.slice([0, 0, 0], [-1, -1, 1]), tf.div(w, 2)); // x1
+            const y1 = tf.sub(transRes.slice([0, 0, 1], [-1, -1, 1]), tf.div(h, 2)); // y1
+            return tf
+                .concat(
+                    [
+                        y1,
+                        x1,
+                        tf.add(y1, h), //y2
+                        tf.add(x1, w), //x2
+                    ],
+                    2
+                )
+                .squeeze();
+        }); // process boxes [y1, x1, y2, x2]
+
+        const [scores, classes] = tf.tidy(() => {
+            // class scores
+            const rawScores = transRes.slice([0, 0, 4], [-1, -1, numClass]).squeeze(0); // #6 only squeeze axis 0 to handle only 1 class models
+            return [rawScores.max(1), rawScores.argMax(1)];
+        }); // get max scores and classes index
+
+        const nms = await tf.image.nonMaxSuppressionAsync(boxes, scores, 500, 0.45, 0.2); // NMS to filter boxes
+
+
+        const boxes_data = boxes.gather(nms, 0).dataSync(); // indexing boxes by nms index
+        const scores_data = scores.gather(nms, 0).dataSync(); // indexing scores by nms index
+        const classes_data = classes.gather(nms, 0).dataSync(); // indexing classes by nms index
+
         const width = input.videoWidth;
         const height = input.videoHeight;
-        // 新模型输出格式：[cx1, cy1, w1, h1, r1, cx2, cy2, w2, h2, r2]
+
+        const finalDetections: { box: number[], label: number, score: number }[] = [];
+        const numDetections = nms.size; // Number of detections after NMS
+
+        for (let i = 0; i < numDetections; i++) {
+            const score = scores_data[i];
+            const label = classes_data[i];
+
+            // boxes_data is [y1, x1, y2, x2] relative to maxSize
+            const y1_scaled = boxes_data[i * 4];
+            const x1_scaled = boxes_data[i * 4 + 1];
+            const y2_scaled = boxes_data[i * 4 + 2];
+            const x2_scaled = boxes_data[i * 4 + 3];
+
+            // Scale back to original video dimensions
+            const x1 = x1_scaled / xRatio;
+            const y1 = y1_scaled / yRatio;
+            const x2 = x2_scaled / xRatio;
+            const y2 = y2_scaled / yRatio;
+
+            // Ensure coordinates are within bounds
+            const finalX1 = Math.max(0, x1);
+            const finalY1 = Math.max(0, y1);
+            const finalX2 = Math.min(width, x2);
+            const finalY2 = Math.min(height, y2);
+
+            // Filter by confidence threshold
+            if (score > 0.2) {
+                finalDetections.push({
+                    box: [finalX1, finalY1, finalX2, finalY2], // xmin, ymin, xmax, ymax
+                    label: label,
+                    score: score
+                });
+            }
+        }
+        console.log("mid:", finalDetections)
+
         let success = false;
-        const raw = bboxCoords;
-        if (bboxCoords.length === 10) {
-            const [cx1, cy1, w1, h1, r1, cx2, cy2, w2, h2, r2] = bboxCoords;
-            // 检查参数范围
-            const valid1 = cx1 >= 0 && cx1 <= width && cy1 >= 0 && cy1 <= height && w1 > 0 && w1 <= width && h1 > 0 && h1 <= height;
-            const valid2 = cx2 >= 0 && cx2 <= width && cy2 >= 0 && cy2 <= height && w2 > 0 && w2 <= width && h2 > 0 && h2 <= height;
-            const rot1ok = r1 >= -Math.PI && r1 <= Math.PI;
-            const rot2ok = r2 >= -Math.PI && r2 <= Math.PI;
-            const box1 = getRectCorners(cx1, cy1, w1, h1, r1);
-            const box2 = getRectCorners(cx2, cy2, w2, h2, r2);
-            const notOverlap = !isRectOverlap(box1, box2);
-            success = valid1 && valid2 && rot1ok && rot2ok && notOverlap;
+        let rawOutput: number[] = [];
+        let maxCompositeScore = -1;
+        let bestPair: { det1: typeof finalDetections[0], det2: typeof finalDetections[0] } | null = null;
+
+        // Iterate through all unique pairs of detections
+        for (let i = 0; i < finalDetections.length; i++) {
+            for (let j = i + 1; j < finalDetections.length; j++) {
+                const det1 = finalDetections[i];
+                const det2 = finalDetections[j];
+
+                // Only consider pairs of the same class
+                if (det1.label === det2.label) {
+                    // Calculate composite score: balances total score and score similarity
+                    const compositeScore = (det1.score + det2.score) * (1 - Math.abs(det1.score - det2.score));
+
+                    if (compositeScore > maxCompositeScore) {
+                        maxCompositeScore = compositeScore;
+                        bestPair = { det1, det2 };
+                    }
+                }
+            }
         }
-        if (Array.isArray(predictions)) {
-            tf.dispose([imgTensor, resized, expanded, normalized, ...predictions, bboxPrediction]);
-        } else {
-            tf.dispose([imgTensor, resized, expanded, normalized, predictions as tf.Tensor, bboxPrediction]);
+        console.log("final:", bestPair)
+
+        if (bestPair) {
+            // Convert bbox to [cx, cy, w, h]
+            const boxToCxCyWh = (box: number[]) => {
+                const xmin = box[0];
+                const ymin = box[1];
+                const xmax = box[2];
+                const ymax = box[3];
+                const w = xmax - xmin;
+                const h = ymax - ymin;
+                const cx = xmin + w / 2;
+                const cy = ymin + h / 2;
+                return [cx, cy, w, h];
+            };
+
+            const [cx1, cy1, w1, h1] = boxToCxCyWh(bestPair.det1.box);
+            const [cx2, cy2, w2, h2] = boxToCxCyWh(bestPair.det2.box);
+
+            // r1 and r2 are always 0 for this model
+            rawOutput = [cx1/input.videoWidth, cy1/input.videoHeight, w1/input.videoWidth, h1/input.videoHeight, 0, cx2/input.videoWidth, cy2/input.videoHeight, w2/input.videoWidth, h2/input.videoHeight, 0];
+            success = true;
         }
-        // 返回 raw 和 success 字段，供前端判断和绘制
-        return [{ raw, success }];
+
+        // Dispose of all tensors
+        tf.dispose([img, imgTensor, resized, expanded, normalized, model_results, transRes, boxes, scores, classes, nms]);
+
+        // Convert all finalDetections to the desired format for allBboxes
+        const allBboxes = finalDetections.map(det => {
+            const [xmin, ymin, xmax, ymax] = det.box;
+            const w = xmax - xmin;
+            const h = ymax - ymin;
+            const cx = xmin + w / 2;
+            const cy = ymin + h / 2;
+            return { cx: cx / input.videoWidth, cy: cy / input.videoHeight, w: w / input.videoWidth, h: h / input.videoHeight, r: 0 };
+        });
+
+        // Return raw, success, and allBboxes fields
+        return [{ raw: rawOutput, success, allBboxes }];
+
         // 获取旋转矩形四个顶点
         function getRectCorners(cx: number, cy: number, w: number, h: number, angle: number): Array<{ x: number, y: number }> {
             const hw = w / 2, hh = h / 2;
@@ -353,7 +464,17 @@ export class SSDModel {
                 success = true;
             }
 
-            return [{ raw: rawOutput, success }];
+            // Convert all finalDetections to the desired format for allBboxes
+            const allBboxes = finalDetections.map(det => {
+                const [xmin, ymin, xmax, ymax] = det.box;
+                const w = xmax - xmin;
+                const h = ymax - ymin;
+                const cx = xmin + w / 2;
+                const cy = ymin + h / 2;
+                return { cx, cy, w, h, r: 0 };
+            });
+
+            return [{ raw: rawOutput, success, allBboxes }];
 
         } catch (e) {
             console.error('Failed to run ONNX inference:', e);
