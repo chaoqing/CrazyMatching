@@ -51,6 +51,7 @@ export class Model {
         let yRatio = 0.;
 
         const img = tf.browser.fromPixels(input);
+        console.log(`Input video dimensions: ${img.shape}, ${input.videoWidth}x${input.videoHeight}`);
         const [h, w] = img.shape.slice(0, 2); // get source width and height
         const maxSize = Math.max(w, h); // get max size
         const imgTensor = tf.pad(img, [
@@ -76,7 +77,7 @@ export class Model {
         // Common names for object detection are 'detection_boxes', 'detection_scores', 'detection_classes', 'num_detections'.
         const model_results = this.model.execute(normalized);
         const numClass = 15;
-        const transRes = tf.transpose(model_results, [0, 2, 1]); // transpose result [b, det, n] => [b, n, det]
+        const transRes = tf.transpose(model_results as tf.Tensor, [0, 2, 1]); // transpose result [b, det, n] => [b, n, det]
         const boxes = tf.tidy(() => {
             const w = transRes.slice([0, 0, 2], [-1, -1, 1]); // get width
             const h = transRes.slice([0, 0, 3], [-1, -1, 1]); // get height
@@ -97,11 +98,11 @@ export class Model {
 
         const [scores, classes] = tf.tidy(() => {
             // class scores
-            const rawScores = transRes.slice([0, 0, 4], [-1, -1, numClass]).squeeze(0); // #6 only squeeze axis 0 to handle only 1 class models
+            const rawScores = transRes.slice([0, 0, 4], [-1, -1, numClass]).squeeze([0]); // #6 only squeeze axis 0 to handle only 1 class models
             return [rawScores.max(1), rawScores.argMax(1)];
         }); // get max scores and classes index
 
-        const nms = await tf.image.nonMaxSuppressionAsync(boxes, scores, 500, 0.45, 0.2); // NMS to filter boxes
+        const nms = await tf.image.nonMaxSuppressionAsync(boxes as tf.Tensor2D, scores, 500, 0.45, 0.2); // NMS to filter boxes
 
 
         const boxes_data = boxes.gather(nms, 0).dataSync(); // indexing boxes by nms index
@@ -209,60 +210,6 @@ export class Model {
 
         // Return raw, success, and allBboxes fields
         return [{ raw: rawOutput, success, allBboxes }];
-
-        // 获取旋转矩形四个顶点
-        function getRectCorners(cx: number, cy: number, w: number, h: number, angle: number): Array<{ x: number, y: number }> {
-            const hw = w / 2, hh = h / 2;
-            const corners = [
-                { x: -hw, y: -hh },
-                { x: hw, y: -hh },
-                { x: hw, y: hh },
-                { x: -hw, y: hh }
-            ];
-            return corners.map(pt => {
-                const x = pt.x * Math.cos(angle) - pt.y * Math.sin(angle) + cx;
-                const y = pt.x * Math.sin(angle) + pt.y * Math.cos(angle) + cy;
-                return { x, y };
-            });
-        }
-
-        // 判断两个旋转矩形是否重叠（分离轴定理，近似实现）
-        function isRectOverlap(a: Array<{ x: number, y: number }>, b: Array<{ x: number, y: number }>): boolean {
-            // 检查所有轴
-            const axes = getAxes(a).concat(getAxes(b));
-            for (const axis of axes) {
-                const [minA, maxA] = projectPolygon(a, axis);
-                const [minB, maxB] = projectPolygon(b, axis);
-                if (maxA < minB || maxB < minA) {
-                    return false; // 存在分离轴
-                }
-            }
-            return true; // 所有轴都重叠
-        }
-
-        function getAxes(corners: Array<{ x: number, y: number }>): Array<{ x: number, y: number }> {
-            const axes = [];
-            for (let i = 0; i < corners.length; i++) {
-                const p1 = corners[i];
-                const p2 = corners[(i + 1) % corners.length];
-                const edge = { x: p2.x - p1.x, y: p2.y - p1.y };
-                // 垂直向量
-                axes.push({ x: -edge.y, y: edge.x });
-            }
-            return axes;
-        }
-
-        function projectPolygon(corners: Array<{ x: number, y: number }>, axis: { x: number, y: number }): [number, number] {
-            const norm = Math.sqrt(axis.x * axis.x + axis.y * axis.y);
-            const ax = axis.x / norm, ay = axis.y / norm;
-            let min = Infinity, max = -Infinity;
-            for (const pt of corners) {
-                const proj = pt.x * ax + pt.y * ay;
-                min = Math.min(min, proj);
-                max = Math.max(max, proj);
-            }
-            return [min, max];
-        }
     }
 }
 
