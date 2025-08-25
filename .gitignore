@@ -154,3 +154,4 @@ model/data/training_data/
 model/fine-tune.yaml
 runs/
 yolo11n.pt
+debug-logs

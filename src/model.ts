@@ -27,6 +27,38 @@ export interface ModelDetectResult {
     allBboxes: { cx: number; cy: number; w: number; h: number; r: number; }[];
 }
 
+// Helper function to convert a tensor or array of tensors to a serializable array
+const DUMP_TENSOR_DATA_AND_SHAPE = true; // Constant to control dumping of tensor data and shape
+
+function tensorToFlatArray(tensor: tf.Tensor | tf.Tensor[] | null): any {
+    if (!tensor) {
+        return null;
+    }
+
+    if (Array.isArray(tensor)) {
+        return tensor.map(t => ({ data: Array.from(t.dataSync()), shape: t.shape }));
+    }
+    return { data: Array.from(tensor.dataSync()), shape: tensor.shape };
+}
+
+// Helper function to send debug data to the backend
+async function sendDebugData(data: any) {
+    if (DUMP_TENSOR_DATA_AND_SHAPE && import.meta.env.DEV) {
+        try {
+            await fetch('/log-debug-data', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(data),
+            });
+            // console.log('Debug data sent successfully.');
+        } catch (error) {
+            console.error('Failed to send debug data:', error);
+        }
+    }
+}
+
 export class Model {
     // Use tf.GraphModel for custom models
     private model: tf.GraphModel | null = null;
@@ -60,7 +92,7 @@ export class Model {
             [0, 0],
         ]);
 
-        xRatio =  640 / maxSize; // update xRatio
+        xRatio = 640 / maxSize; // update xRatio
         yRatio = 640 / maxSize; // update yRatio
         console.log("ratio: ", xRatio, yRatio)
 
@@ -191,8 +223,21 @@ export class Model {
             const [cx2, cy2, w2, h2] = boxToCxCyWh(bestPair.det2.box);
 
             // r1 and r2 are always 0 for this model
-            rawOutput = [cx1/input.videoWidth, cy1/input.videoHeight, w1/input.videoWidth, h1/input.videoHeight, 0, cx2/input.videoWidth, cy2/input.videoHeight, w2/input.videoWidth, h2/input.videoHeight, 0];
+            rawOutput = [cx1 / input.videoWidth, cy1 / input.videoHeight, w1 / input.videoWidth, h1 / input.videoHeight, 0, cx2 / input.videoWidth, cy2 / input.videoHeight, w2 / input.videoWidth, h2 / input.videoHeight, 0];
             success = true;
+        }
+
+        // Debugging: Send data to backend in development mode
+        if (DUMP_TENSOR_DATA_AND_SHAPE && import.meta.env.DEV) {
+            sendDebugData({
+                timestamp: new Date().toISOString(),
+                model: 'Model',
+                img: tensorToFlatArray(img),
+                model_results: tensorToFlatArray(model_results),
+                nms: tensorToFlatArray(nms),
+                finalDetections: finalDetections,
+                raw: rawOutput,
+            });
         }
 
         // Dispose of all tensors
@@ -266,7 +311,7 @@ function nms(boxes: number[][], scores: number[], iouThreshold: number): number[
 export class SSDModel {
     private session: ort.InferenceSession | null = null;
     private inputShape: [number, number, number, number] = [1, 3, 320, 320]; // Default input shape for SSDLite
-    
+
 
     async load() {
         ort.env.wasm.numThreads = 1; // Use single thread for WASM for better compatibility
@@ -411,6 +456,23 @@ export class SSDModel {
                 success = true;
             }
 
+            // Debugging: Send data to backend in development mode
+            if (DUMP_TENSOR_DATA_AND_SHAPE && import.meta.env.DEV) {
+                sendDebugData({
+                    timestamp: new Date().toISOString(),
+                    model: 'SSDModel',
+                    img: tensorToFlatArray(imgTensor),
+                    model_results: {
+                        boxes: Array.from(boxes),
+                        scores: Array.from(scores),
+                        labels: Array.from(labels),
+                    },
+                    nms: selectedIndices, // selectedIndices is already an array
+                    finalDetections: finalDetections,
+                    raw: rawOutput,
+                });
+            }
+
             // Convert all finalDetections to the desired format for allBboxes
             const allBboxes = finalDetections.map(det => {
                 const [xmin, ymin, xmax, ymax] = det.box;
@@ -429,3 +491,4 @@ export class SSDModel {
         }
     }
 }
+

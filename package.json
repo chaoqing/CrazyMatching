@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --host 0.0.0.0 --mode development",
     "build": "tsc && vite build --mode development",
     "serve": "vite preview",
     "test": "echo \"Error: no test specified\" && exit 1"
