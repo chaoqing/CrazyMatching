@@ -17,6 +17,7 @@ uu distributed under the License is distributed on an "AS IS" BASIS,
 
 import * as tf from '@tensorflow/tfjs';
 import * as ort from 'onnxruntime-web';
+import cv from 'opencv.js';
 
 // Define a type for your custom detected objects, similar to cocoSsd.DetectedObject
 // Adjust properties based on your model's output and what you need for your game logic.
@@ -488,6 +489,152 @@ export class SSDModel {
         } catch (e) {
             console.error('Failed to run ONNX inference:', e);
             return [];
+        }
+    }
+}
+
+export class CVModel {
+    private minArea = 500; // Default minimum area, can be adjusted
+
+    async load() {
+        // Ensure OpenCV.js is loaded
+        return new Promise<void>((resolve) => {
+            if (cv.onRuntimeInitialized) {
+                resolve();
+            } else {
+                cv.onRuntimeInitialized = () => {
+                    console.log('OpenCV.js loaded.');
+                    resolve();
+                };
+            }
+        });
+    }
+
+    async detect(input: HTMLVideoElement): Promise<ModelDetectResult[]> {
+        let src;
+        if (DUMP_TENSOR_DATA_AND_SHAPE && import.meta.env.DEV) {
+            const img = document.createElement('img');
+            img.src = '/example.jpg';
+            await new Promise((resolve) => { img.onload = resolve; });
+            src = cv.imread(img);
+        } else {
+            src = cv.imread(input);
+        }
+        
+        const gray = new cv.Mat();
+        const objectMask = new cv.Mat();
+        const labels = new cv.Mat();
+        const stats = new cv.Mat();
+        const centroids = new cv.Mat();
+        
+        // Get canvas for debugging visualization
+        const canvas = document.getElementById('canvas') as HTMLCanvasElement;
+
+        try {
+            cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+            cv.threshold(gray, objectMask, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
+            cv.bitwise_not(objectMask, objectMask); // Invert the mask
+
+            const numLabels = cv.connectedComponentsWithStats(objectMask, labels, stats, centroids, 4, cv.CV_32S);
+
+            const allBboxes: { cx: number; cy: number; w: number; h: number; r: number; }[] = [];
+            const componentAreas: number[] = [];
+
+            for (let i = 1; i < numLabels; ++i) { // Skip background label 0
+                const area = stats.data32S[i * cv.CC_STAT_MAX + cv.CC_STAT_AREA];
+                if (area > 0) {
+                    componentAreas.push(area);
+                }
+            }
+
+            let lowerBound = -1;
+            let upperBound = Infinity;
+
+            if (componentAreas.length > 2) {
+                const meanArea = componentAreas.reduce((sum, a) => sum + a, 0) / componentAreas.length;
+                const stdDevArea = Math.sqrt(componentAreas.map(a => (a - meanArea) ** 2).reduce((sum, sq) => sum + sq, 0) / componentAreas.length);
+                lowerBound = meanArea - 2 * stdDevArea;
+                upperBound = meanArea + 2 * stdDevArea;
+            }
+
+            for (let i = 1; i < numLabels; ++i) {
+                const x = stats.data32S[i * cv.CC_STAT_MAX + cv.CC_STAT_LEFT];
+                const y = stats.data32S[i * cv.CC_STAT_MAX + cv.CC_STAT_TOP];
+                const w = stats.data32S[i * cv.CC_STAT_MAX + cv.CC_STAT_WIDTH];
+                const h = stats.data32S[i * cv.CC_STAT_MAX + cv.CC_STAT_HEIGHT];
+                const area = stats.data32S[i * cv.CC_STAT_MAX + cv.CC_STAT_AREA];
+
+                if (area < this.minArea) {
+                    continue;
+                }
+
+                const isOutlier = !(lowerBound < area && area < upperBound);
+
+                if (!isOutlier) {
+                    const cx = (x + w / 2) / input.videoWidth;
+                    const cy = (y + h / 2) / input.videoHeight;
+                    const normalizedW = w / input.videoWidth;
+                    const normalizedH = h / input.videoHeight;
+                    allBboxes.push({ cx, cy, w: normalizedW, h: normalizedH, r: 0 });
+                    
+                    // Draw component boundaries for debugging
+                    if (DUMP_TENSOR_DATA_AND_SHAPE && import.meta.env.DEV) {
+                        const ctx = canvas.getContext('2d');
+                        if (ctx) {
+                            ctx.strokeStyle = isOutlier ? 'red' : 'green';
+                            ctx.lineWidth = 2;
+                            ctx.strokeRect(x, y, w, h);
+                            
+                            // Add area text
+                            ctx.fillStyle = isOutlier ? 'red' : 'green';
+                            ctx.font = '12px Arial';
+                            ctx.fillText(`Area: ${area}`, x, y - 5);
+                        }
+                    }
+                }
+            }
+
+            // Find the two largest bounding boxes for the 'raw' output, similar to card detection
+            // Sort by area (descending) and take the top 2
+            const sortedBboxes = [...allBboxes].sort((a, b) => (b.w * b.h) - (a.w * a.h));
+
+            let rawOutput: number[] = [];
+            let success = false;
+
+            if (sortedBboxes.length >= 2) {
+                const det1 = sortedBboxes[0];
+                const det2 = sortedBboxes[1];
+                rawOutput = [det1.cx, det1.cy, det1.w, det1.h, det1.r, det2.cx, det2.cy, det2.w, det2.h, det2.r];
+                success = true;
+            }
+
+            // Save debug visualization if enabled
+            if (DUMP_TENSOR_DATA_AND_SHAPE && import.meta.env.DEV) {
+                const ctx = canvas.getContext('2d');
+                if (ctx) {
+                    // Draw original image
+                    cv.imshow(canvas, src);
+                    
+                    // Draw thresholded image
+                    const debugCanvas = document.createElement('canvas');
+                    debugCanvas.width = canvas.width;
+                    debugCanvas.height = canvas.height;
+                    cv.imshow(debugCanvas, objectMask);
+                }
+            }
+
+            return [{ raw: rawOutput, success, allBboxes }];
+
+        } catch (error) {
+            console.error('OpenCV.js detection failed:', error);
+            return [];
+        } finally {
+            src.delete();
+            gray.delete();
+            objectMask.delete();
+            labels.delete();
+            stats.delete();
+            centroids.delete();
         }
     }
 }

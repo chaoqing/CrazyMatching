@@ -263,9 +263,9 @@ def extract_animal_images_auto(image_path, output_dir, min_area=500):
 
 
 if __name__ == "__main__":
-    # image_file = Path(__file__).with_name("..")/'../.gemini/IMG_20250720_090212_edit_730440424190105.jpg'
-    # output_directory_extract = Path(__file__).with_name('extracted_animals')
-    # extract_animal_images_auto(image_file, output_directory_extract, min_area=1000)
+    image_file = Path(__file__).with_name("..")/'../.gemini/IMG_20250720_090212_edit_730440424190105.jpg'
+    output_directory_extract = Path(__file__).with_name('extracted_animals')
+    extract_animal_images_auto(image_file, output_directory_extract, min_area=1000)
 
     for p in (Path(__file__).with_name("..")/"../debug-logs/").glob("*.json"):
         output_dir = p.with_suffix("")

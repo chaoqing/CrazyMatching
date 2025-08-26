@@ -14,15 +14,16 @@ if (import.meta.env.DEV) {
 }
 
 import './style.css';
-import { Model, SSDModel, ModelDetectResult } from './model';
+import { Model, SSDModel, CVModel, ModelDetectResult } from './model';
 
 class Main {
     private video: HTMLVideoElement;
     private canvas: HTMLCanvasElement;
     private tfjsModel: Model;
     private onnxModel: SSDModel;
-    private currentModel: Model | SSDModel;
-    private activeModelType: 'tfjs' | 'onnx' = 'tfjs'; // Default to tfjs model
+    private cvModel: CVModel;
+    private currentModel: Model | SSDModel | CVModel;
+    private activeModelType: 'tfjs' | 'onnx' | 'cv' = 'cv';
     private isDetecting: boolean = false;
     private videoDevices: MediaDeviceInfo[] = [];
     private currentStream: MediaStream | null = null;
@@ -32,7 +33,8 @@ class Main {
         this.canvas = document.getElementById('canvas') as HTMLCanvasElement;
         this.tfjsModel = new Model();
         this.onnxModel = new SSDModel();
-        this.currentModel = this.activeModelType === 'tfjs' ? this.tfjsModel : this.onnxModel;
+        this.cvModel = new CVModel();
+        this.currentModel = this.activeModelType === 'tfjs' ? this.tfjsModel : (this.activeModelType === "cv" ? this.cvModel : this.onnxModel);
 
         const toggleBtn = document.getElementById('toggle-algo') as HTMLButtonElement;
         if (toggleBtn) {
@@ -53,10 +55,19 @@ class Main {
         const switchModelBtn = document.getElementById('switch-model-btn') as HTMLButtonElement;
         if (switchModelBtn) {
             switchModelBtn.addEventListener('click', async () => {
-                this.activeModelType = this.activeModelType === 'tfjs' ? 'onnx' : 'tfjs';
-                switchModelBtn.textContent = `Switch to ${this.activeModelType === 'tfjs' ? 'ONNX' : 'TF.js'} Model`;
-                
-                this.currentModel = this.activeModelType === 'tfjs' ? this.tfjsModel : this.onnxModel;
+                if (this.activeModelType === 'tfjs') {
+                    this.activeModelType = 'onnx';
+                    this.currentModel = this.onnxModel;
+                    switchModelBtn.textContent = 'Switch to CV Model';
+                } else if (this.activeModelType === 'onnx') {
+                    this.activeModelType = 'cv';
+                    this.currentModel = this.cvModel;
+                    switchModelBtn.textContent = 'Switch to TF.js Model';
+                } else {
+                    this.activeModelType = 'tfjs';
+                    this.currentModel = this.tfjsModel;
+                    switchModelBtn.textContent = 'Switch to ONNX Model';
+                }
                 console.log(`Switching to ${this.activeModelType} model...`);
                 await this.currentModel.load();
                 console.log(`${this.activeModelType} model loaded.`);

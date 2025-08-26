@@ -4,6 +4,16 @@ import path from 'node:path';
 
 export default defineConfig(({ mode }) => ({
   base: './',
+  build: {
+    target: 'es2020',
+    minify: mode === 'development' ? false : 'esbuild',
+    rollupOptions: {
+      external: ['fs', 'path', 'crypto'],
+    },
+    commonjsOptions: {
+      transformMixedEsModules: true,
+    },
+  },
   server: {
     allowedHosts: [
       '.loca.lt',
@@ -60,6 +70,9 @@ export default defineConfig(({ mode }) => ({
     }
   ],
   optimizeDeps: {
-    exclude: ['onnxruntime-web'], // Exclude onnxruntime-web from Vite's dependency optimization
+    exclude: ['onnxruntime-web', 'opencv.js'], // Exclude heavy dependencies from optimization
+    esbuildOptions: {
+      target: 'es2020',
+    },
   },
 }));
