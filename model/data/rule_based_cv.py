@@ -470,10 +470,19 @@ def process_video(input_path: str, output_path: str):
             break
 
         images = _extract_animal_images_auto_advanced(frame)
-        image = images.get("background", frame)
+
+        # if (frame_count % 30 == 0) and (frame_count < 3000):
+        #     for k, v in images.items():
+        #         image_path = str(Path(output_path).with_suffix("")/f"{frame_count:05d}-{k}.png")
+        #         cv2.imwrite(image_path, v)
+        #         print(f"Saved debug bounding boxes image to: {image_path}")
+        #         print(f"Processing frame {frame_count}")
 
         # 8. 将处理后的帧写入输出文件
-        writer.write(image)
+        image = images.get("debug_closed", frame)
+        # Ensure the image is resized to the output_size before writing
+        image_resized = cv2.resize(image, output_size)
+        writer.write(cv2.cvtColor(image_resized, cv2.COLOR_GRAY2RGB))
         
         frame_count += 1
 
@@ -485,6 +494,8 @@ def process_video(input_path: str, output_path: str):
     print(f"视频已保存至: {output_path}")
 
 if __name__ == "__main__":
+    if (Path(__file__).with_name("input.mp4")).exists():
+        process_video(str(Path(__file__).with_name("input.mp4")), str(Path(__file__).with_name("output.mp4")))
     image_file = Path(__file__).with_name("..")/'../.gemini/IMG_20250720_090212_edit_730440424190105.jpg'
     output_directory_extract = Path(__file__).with_name('extracted_animals')
     extract_animal_images_auto(image_file, output_directory_extract, min_area=1000)
