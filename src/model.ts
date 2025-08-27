@@ -17,7 +17,8 @@ uu distributed under the License is distributed on an "AS IS" BASIS,
 
 import * as tf from '@tensorflow/tfjs';
 import * as ort from 'onnxruntime-web';
-import cv from 'opencv.js';
+import { cv2_detect } from './cv2.js';
+declare const cv: any;
 
 // Define a type for your custom detected objects, similar to cocoSsd.DetectedObject
 // Adjust properties based on your model's output and what you need for your game logic.
@@ -60,6 +61,14 @@ async function sendDebugData(data: any) {
     }
 }
 
+function getDimensions(input: HTMLVideoElement | HTMLImageElement) {
+    if (input instanceof HTMLVideoElement) {
+        return { width: input.videoWidth, height: input.videoHeight };
+    } else {
+        return { width: input.width, height: input.height };
+    }
+}
+
 export class Model {
     // Use tf.GraphModel for custom models
     private model: tf.GraphModel | null = null;
@@ -74,7 +83,7 @@ export class Model {
         console.log('Custom model loaded from:', modelPath);
     }
 
-    async detect(input: HTMLVideoElement): Promise<ModelDetectResult[]> {
+    async detect(input: HTMLVideoElement | HTMLImageElement): Promise<ModelDetectResult[]> {
         if (!this.model) {
             console.log('Model not loaded.');
             return [];
@@ -84,7 +93,8 @@ export class Model {
         let yRatio = 0.;
 
         const img = tf.browser.fromPixels(input);
-        console.log(`Input video dimensions: ${img.shape}, ${input.videoWidth}x${input.videoHeight}`);
+        const dims = getDimensions(input);
+        console.log(`Input dimensions: ${img.shape}, ${dims.width}x${dims.height}`);
         const [h, w] = img.shape.slice(0, 2); // get source width and height
         const maxSize = Math.max(w, h); // get max size
         const imgTensor = tf.pad(img, [
@@ -142,8 +152,8 @@ export class Model {
         const scores_data = scores.gather(nms, 0).dataSync(); // indexing scores by nms index
         const classes_data = classes.gather(nms, 0).dataSync(); // indexing classes by nms index
 
-        const width = input.videoWidth;
-        const height = input.videoHeight;
+        const width = dims.width;
+        const height = dims.height;
 
         const finalDetections: { box: number[], label: number, score: number }[] = [];
         const numDetections = nms.size; // Number of detections after NMS
@@ -224,7 +234,8 @@ export class Model {
             const [cx2, cy2, w2, h2] = boxToCxCyWh(bestPair.det2.box);
 
             // r1 and r2 are always 0 for this model
-            rawOutput = [cx1 / input.videoWidth, cy1 / input.videoHeight, w1 / input.videoWidth, h1 / input.videoHeight, 0, cx2 / input.videoWidth, cy2 / input.videoHeight, w2 / input.videoWidth, h2 / input.videoHeight, 0];
+            const dims = getDimensions(input);
+            rawOutput = [cx1 / dims.width, cy1 / dims.height, w1 / dims.width, h1 / dims.height, 0, cx2 / dims.width, cy2 / dims.height, w2 / dims.width, h2 / dims.height, 0];
             success = true;
         }
 
@@ -251,7 +262,8 @@ export class Model {
             const h = ymax - ymin;
             const cx = xmin + w / 2;
             const cy = ymin + h / 2;
-            return { cx: cx / input.videoWidth, cy: cy / input.videoHeight, w: w / input.videoWidth, h: h / input.videoHeight, r: 0 };
+            const dims = getDimensions(input);
+            return { cx: cx / dims.width, cy: cy / dims.height, w: w / dims.width, h: h / dims.height, r: 0 };
         });
 
         // Return raw, success, and allBboxes fields
@@ -344,14 +356,15 @@ export class SSDModel {
         }
     }
 
-    async detect(input: HTMLVideoElement): Promise<ModelDetectResult[]> {
+    async detect(input: HTMLVideoElement | HTMLImageElement): Promise<ModelDetectResult[]> {
         if (!this.session) {
             console.log('ONNX Model not loaded.');
             return [];
         }
 
-        const width = input.videoWidth;
-        const height = input.videoHeight;
+        const dims = getDimensions(input);
+        const width = dims.width;
+        const height = dims.height;
         const resized_height = this.inputShape[2];
         const resized_width = this.inputShape[3];
         console.log(`Input video dimensions: ${width}x${height}`);
@@ -495,147 +508,57 @@ export class SSDModel {
 
 export class CVModel {
     private minArea = 500; // Default minimum area, can be adjusted
+    private isLoaded = false;
 
     async load() {
-        // Ensure OpenCV.js is loaded
-        return new Promise<void>((resolve) => {
-            if (cv.onRuntimeInitialized) {
-                resolve();
-            } else {
-                cv.onRuntimeInitialized = () => {
-                    console.log('OpenCV.js loaded.');
+        // Wait for OpenCV.js to be loaded
+        if (typeof cv === 'undefined') {
+            await new Promise<void>((resolve) => {
+                // Check if OpenCV is already loaded
+                if (typeof cv !== 'undefined') {
+                    this.isLoaded = true;
                     resolve();
-                };
-            }
-        });
-    }
+                    return;
+                }
 
-    async detect(input: HTMLVideoElement): Promise<ModelDetectResult[]> {
-        let src;
-        if (DUMP_TENSOR_DATA_AND_SHAPE && import.meta.env.DEV) {
-            const img = document.createElement('img');
-            img.src = '/example.jpg';
-            await new Promise((resolve) => { img.onload = resolve; });
-            src = cv.imread(img);
+                // Otherwise wait for it to load
+                window.addEventListener('opencv-loaded', () => {
+                    this.isLoaded = true;
+                    resolve();
+                }, { once: true });
+            });
         } else {
-            src = cv.imread(input);
-        }
-        
-        const gray = new cv.Mat();
-        const objectMask = new cv.Mat();
-        const labels = new cv.Mat();
-        const stats = new cv.Mat();
-        const centroids = new cv.Mat();
-        
-        // Get canvas for debugging visualization
-        const canvas = document.getElementById('canvas') as HTMLCanvasElement;
-
-        try {
-            cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-            cv.threshold(gray, objectMask, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
-            cv.bitwise_not(objectMask, objectMask); // Invert the mask
-
-            const numLabels = cv.connectedComponentsWithStats(objectMask, labels, stats, centroids, 4, cv.CV_32S);
-
-            const allBboxes: { cx: number; cy: number; w: number; h: number; r: number; }[] = [];
-            const componentAreas: number[] = [];
-
-            for (let i = 1; i < numLabels; ++i) { // Skip background label 0
-                const area = stats.data32S[i * cv.CC_STAT_MAX + cv.CC_STAT_AREA];
-                if (area > 0) {
-                    componentAreas.push(area);
-                }
-            }
-
-            let lowerBound = -1;
-            let upperBound = Infinity;
-
-            if (componentAreas.length > 2) {
-                const meanArea = componentAreas.reduce((sum, a) => sum + a, 0) / componentAreas.length;
-                const stdDevArea = Math.sqrt(componentAreas.map(a => (a - meanArea) ** 2).reduce((sum, sq) => sum + sq, 0) / componentAreas.length);
-                lowerBound = meanArea - 2 * stdDevArea;
-                upperBound = meanArea + 2 * stdDevArea;
-            }
-
-            for (let i = 1; i < numLabels; ++i) {
-                const x = stats.data32S[i * cv.CC_STAT_MAX + cv.CC_STAT_LEFT];
-                const y = stats.data32S[i * cv.CC_STAT_MAX + cv.CC_STAT_TOP];
-                const w = stats.data32S[i * cv.CC_STAT_MAX + cv.CC_STAT_WIDTH];
-                const h = stats.data32S[i * cv.CC_STAT_MAX + cv.CC_STAT_HEIGHT];
-                const area = stats.data32S[i * cv.CC_STAT_MAX + cv.CC_STAT_AREA];
-
-                if (area < this.minArea) {
-                    continue;
-                }
-
-                const isOutlier = !(lowerBound < area && area < upperBound);
-
-                if (!isOutlier) {
-                    const cx = (x + w / 2) / input.videoWidth;
-                    const cy = (y + h / 2) / input.videoHeight;
-                    const normalizedW = w / input.videoWidth;
-                    const normalizedH = h / input.videoHeight;
-                    allBboxes.push({ cx, cy, w: normalizedW, h: normalizedH, r: 0 });
-                    
-                    // Draw component boundaries for debugging
-                    if (DUMP_TENSOR_DATA_AND_SHAPE && import.meta.env.DEV) {
-                        const ctx = canvas.getContext('2d');
-                        if (ctx) {
-                            ctx.strokeStyle = isOutlier ? 'red' : 'green';
-                            ctx.lineWidth = 2;
-                            ctx.strokeRect(x, y, w, h);
-                            
-                            // Add area text
-                            ctx.fillStyle = isOutlier ? 'red' : 'green';
-                            ctx.font = '12px Arial';
-                            ctx.fillText(`Area: ${area}`, x, y - 5);
-                        }
-                    }
-                }
-            }
-
-            // Find the two largest bounding boxes for the 'raw' output, similar to card detection
-            // Sort by area (descending) and take the top 2
-            const sortedBboxes = [...allBboxes].sort((a, b) => (b.w * b.h) - (a.w * a.h));
-
-            let rawOutput: number[] = [];
-            let success = false;
-
-            if (sortedBboxes.length >= 2) {
-                const det1 = sortedBboxes[0];
-                const det2 = sortedBboxes[1];
-                rawOutput = [det1.cx, det1.cy, det1.w, det1.h, det1.r, det2.cx, det2.cy, det2.w, det2.h, det2.r];
-                success = true;
-            }
-
-            // Save debug visualization if enabled
-            if (DUMP_TENSOR_DATA_AND_SHAPE && import.meta.env.DEV) {
-                const ctx = canvas.getContext('2d');
-                if (ctx) {
-                    // Draw original image
-                    cv.imshow(canvas, src);
-                    
-                    // Draw thresholded image
-                    const debugCanvas = document.createElement('canvas');
-                    debugCanvas.width = canvas.width;
-                    debugCanvas.height = canvas.height;
-                    cv.imshow(debugCanvas, objectMask);
-                }
-            }
-
-            return [{ raw: rawOutput, success, allBboxes }];
-
-        } catch (error) {
-            console.error('OpenCV.js detection failed:', error);
-            return [];
-        } finally {
-            src.delete();
-            gray.delete();
-            objectMask.delete();
-            labels.delete();
-            stats.delete();
-            centroids.delete();
+            this.isLoaded = true;
         }
     }
+
+    async detect(input: HTMLVideoElement | HTMLImageElement): Promise<ModelDetectResult[]> {
+        if (!this.isLoaded) {
+            console.error('OpenCV.js not loaded. Call load() first.');
+            return [];
+        }
+
+        if (input instanceof HTMLVideoElement) {
+            const imgTensor = tf.browser.fromPixels(input);
+            const dims = getDimensions(input);
+
+            let rgbaTensor = imgTensor;
+            if (imgTensor.shape[2] === 3) {
+                // If the tensor has 3 channels (RGB), add an opaque alpha channel
+                const ones = tf.ones([dims.height, dims.width, 1]).mul(255);
+                rgbaTensor = tf.concat([imgTensor, ones], 2) as tf.Tensor3D;
+                tf.dispose(ones);
+            }
+
+            const pixels = new Uint8ClampedArray(rgbaTensor.dataSync());
+            let imageData = new ImageData(pixels, dims.width, dims.height);
+            tf.dispose([imgTensor, rgbaTensor]);
+            return cv2_detect(imageData, this.minArea);
+        }else{
+            return cv2_detect(input, this.minArea);
+        }
+
+    }
+
 }
 

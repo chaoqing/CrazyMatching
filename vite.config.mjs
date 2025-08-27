@@ -1,36 +1,29 @@
 import { defineConfig } from 'vite';
 import fs from 'node:fs';
 import path from 'node:path';
+import { viteStaticCopy } from 'vite-plugin-static-copy';
 
 export default defineConfig(({ mode }) => ({
   base: './',
   build: {
-    target: 'es2020',
-    minify: mode === 'development' ? false : 'esbuild',
     rollupOptions: {
-      external: ['fs', 'path', 'crypto'],
-    },
-    commonjsOptions: {
-      transformMixedEsModules: true,
-    },
-  },
-  server: {
-    allowedHosts: [
-      '.loca.lt',
-      'localhost',
-      '192.168.1.3',
-      '127.0.0.1'
-    ],
-    watch: {
-      ignored: [
-        '**/.venv/**',
-        '**/model/data/**',
-        '**/.git/**',
-        '**/node_modules/**'
-      ]
-    },
+      output: {
+        manualChunks: {
+          'tensorflow': ['@tensorflow/tfjs'],
+          'onnxruntime': ['onnxruntime-web'],
+        }
+      }
+    }
   },
   plugins: [
+    viteStaticCopy({
+      targets: [
+        {
+          src: 'node_modules/opencv.js/opencv.js',
+          dest: 'assets'
+        }
+      ]
+    }),
     {
       name: "log-debug-data-api",
       // Add a custom middleware for logging in development mode
@@ -69,10 +62,24 @@ export default defineConfig(({ mode }) => ({
       }
     }
   ],
-  optimizeDeps: {
-    exclude: ['onnxruntime-web', 'opencv.js'], // Exclude heavy dependencies from optimization
-    esbuildOptions: {
-      target: 'es2020',
+  server: {
+    allowedHosts: [
+      '.loca.lt',
+      'localhost',
+      '192.168.1.3',
+      '127.0.0.1'
+    ],
+    watch: {
+      ignored: [
+        '**/.venv/**',
+        '**/model/data/**',
+        '**/.git/**',
+        '**/node_modules/**'
+      ]
     },
+  },
+
+  optimizeDeps: {
+    exclude: ['onnxruntime-web'],
   },
 }));

@@ -35,7 +35,7 @@ class Main {
         this.onnxModel = new SSDModel();
         this.cvModel = new CVModel();
         this.currentModel = this.activeModelType === 'tfjs' ? this.tfjsModel : (this.activeModelType === "cv" ? this.cvModel : this.onnxModel);
-
+        
         const toggleBtn = document.getElementById('toggle-algo') as HTMLButtonElement;
         if (toggleBtn) {
             toggleBtn.addEventListener('click', () => {
@@ -76,32 +76,50 @@ class Main {
     }
 
     async run() {
+        console.log(`Switching to ${this.activeModelType} model...`);
         await this.currentModel.load();
-        await this.setupCamera();
+        try {
+            await this.setupCamera();
+        } catch (error) {
+            console.warn('Failed to setup camera, falling back to example image:', error);
+            const img = document.createElement('img');
+            img.src = '/example.jpg';
+            await new Promise((resolve) => { img.onload = resolve; });
+            await this.currentModel.detect(img);
+            // If detect succeeds, start the detection loop with the image
+            if (this.isDetecting) {
+                this.detect();
+            }
+        }
     }
 
     async setupCamera() {
-        // 1. Enumerate devices
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        this.videoDevices = devices.filter(device => device.kind === 'videoinput');
-        this.videoDevices.sort((a, b) => a.label.localeCompare(b.label));
-        console.log('Available video devices:', this.videoDevices.map(d => ({ label: d.label, deviceId: d.deviceId })));
+        try {
+            // 1. Enumerate devices
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            this.videoDevices = devices.filter(device => device.kind === 'videoinput');
+            this.videoDevices.sort((a, b) => a.label.localeCompare(b.label));
+            console.log('Available video devices:', this.videoDevices.map(d => ({ label: d.label, deviceId: d.deviceId })));
 
-        // 2. Determine the best initial camera
-        const wideCamera = this.videoDevices.find(d => d.label.toLowerCase().includes('wide'));
-        const initialDeviceId = wideCamera ? wideCamera.deviceId : (this.videoDevices.length > 0 ? this.videoDevices[0].deviceId : undefined);
-        console.log('Initial camera selected:', initialDeviceId);
+            // 2. Determine the best initial camera
+            const wideCamera = this.videoDevices.find(d => d.label.toLowerCase().includes('wide'));
+            const initialDeviceId = wideCamera ? wideCamera.deviceId : (this.videoDevices.length > 0 ? this.videoDevices[0].deviceId : undefined);
+            console.log('Initial camera selected:', initialDeviceId);
 
-        // 3. Start the stream with the chosen camera
-        if (initialDeviceId) {
-            await this.startStream(initialDeviceId);
-        } else {
-            // Fallback if no specific device is found
-            await this.startStream();
+            // 3. Start the stream with the chosen camera
+            if (initialDeviceId) {
+                await this.startStream(initialDeviceId);
+            } else {
+                // Fallback if no specific device is found
+                await this.startStream();
+            }
+
+            // 4. Setup UI after stream is running
+            this.setupCameraSelectorUI();
+        } catch (error) {
+            console.error('Failed to setup camera:', error);
+            throw error; // Re-throw to trigger the fallback in run()
         }
-
-        // 4. Setup UI after stream is running
-        this.setupCameraSelectorUI();
     }
 
     setupCameraSelectorUI() {
@@ -157,6 +175,7 @@ class Main {
 
         } catch (error) {
             console.error(`Error starting stream for device ${deviceId}:`, error);
+            throw error; // Re-throw the error so it propagates up
         }
     }
 

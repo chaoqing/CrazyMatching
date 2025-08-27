@@ -17,5 +17,5 @@
     "noImplicitReturns": true,
     "skipLibCheck": true
   },
-  "include": ["src", "src/global.d.ts", "src/types/*.d.ts"]
+  "include": ["src", "src/cv2.d.ts", "src/global.d.ts"]
 }
