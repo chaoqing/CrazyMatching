@@ -6,6 +6,127 @@ import random
 import json
 from tqdm import tqdm
 
+def compute_similarity_ORB(image1: np.ndarray, image2: np.ndarray) -> float:
+    """
+    Compute similarity between two RGBA images that is invariant to size and rotation.
+    
+    Args:
+        image1: First RGBA image as numpy array
+        image2: Second RGBA image as numpy array
+        
+    Returns:
+        float: Similarity score between 0 and 1, where 1 means identical
+    """
+    # Convert RGBA to grayscale for feature detection
+    if image1.shape[-1] == 4:  # RGBA
+        image1_gray = cv2.cvtColor(image1, cv2.COLOR_RGBA2GRAY)
+        image2_gray = cv2.cvtColor(image2, cv2.COLOR_RGBA2GRAY)
+    else:  # Assume RGB
+        image1_gray = cv2.cvtColor(image1, cv2.COLOR_RGB2GRAY)
+        image2_gray = cv2.cvtColor(image2, cv2.COLOR_RGB2GRAY)
+    
+    # Initialize ORB detector
+    orb = cv2.ORB_create(nfeatures=1000)
+    
+    # Detect keypoints and compute descriptors
+    keypoints1, descriptors1 = orb.detectAndCompute(image1_gray, None)
+    keypoints2, descriptors2 = orb.detectAndCompute(image2_gray, None)
+    
+    # If no keypoints found, images are likely blank or too similar
+    if descriptors1 is None or descriptors2 is None:
+        return 0.0
+    
+    # Create BF (Brute Force) matcher object
+    bf = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+    
+    # Match descriptors
+    matches = bf.match(descriptors1, descriptors2)
+    
+    # Sort matches by distance (lower distance = better match)
+    matches = sorted(matches, key=lambda x: x.distance)
+    
+    # Calculate similarity score
+    # Consider both the number of good matches and their quality
+    max_matches = min(len(keypoints1), len(keypoints2))
+    if max_matches == 0:
+        return 0.0
+        
+    # Get the distances of all matches
+    distances = np.array([m.distance for m in matches])
+    
+    # Consider only good matches (distance < 64 is typically good for ORB)
+    good_matches = distances < 64
+    num_good_matches = np.sum(good_matches)
+    
+    # Calculate similarity score based on number of good matches and their quality
+    if num_good_matches == 0:
+        return 0.0
+        
+    # Normalize by the maximum possible matches
+    similarity = num_good_matches / max_matches
+    
+    # Adjust score based on average distance of good matches
+    if len(good_matches) > 0:
+        avg_distance = np.mean(distances[good_matches])
+        distance_factor = 1 - (avg_distance / 64)  # Normalize to [0,1]
+        similarity = similarity * distance_factor
+    
+    return min(1.0, max(0.0, similarity))
+
+def compute_similarity_simple(image1: np.ndarray, image2: np.ndarray) -> float:
+    """
+    Compute similarity between two RGBA images using Hu Moments.
+    This method is invariant to translation, rotation, and scale.
+    
+    Args:
+        image1: First RGBA image as numpy array
+        image2: Second RGBA image as numpy array
+        
+    Returns:
+        float: Similarity score between 0 and 1, where 1 means identical
+    """
+    # Convert RGBA to grayscale
+    if image1.shape[-1] == 4:  # RGBA
+        image1_gray = cv2.cvtColor(image1, cv2.COLOR_RGBA2GRAY)
+        image2_gray = cv2.cvtColor(image2, cv2.COLOR_RGBA2GRAY)
+    else:  # Assume RGB
+        image1_gray = cv2.cvtColor(image1, cv2.COLOR_RGB2GRAY)
+        image2_gray = cv2.cvtColor(image2, cv2.COLOR_RGB2GRAY)
+    
+    # Calculate Hu Moments for both images
+    moments1 = cv2.moments(image1_gray)
+    moments2 = cv2.moments(image2_gray)
+    
+    # Handle empty images or failed moment calculation
+    if moments1['m00'] == 0 or moments2['m00'] == 0:
+        return 0.0
+    
+    # Calculate Hu Moments
+    hu_moments1 = cv2.HuMoments(moments1)
+    hu_moments2 = cv2.HuMoments(moments2)
+    
+    # Convert to log scale to handle small values better
+    for i in range(7):
+        if hu_moments1[i] != 0:
+            hu_moments1[i] = -np.sign(hu_moments1[i]) * np.log10(abs(hu_moments1[i]))
+        if hu_moments2[i] != 0:
+            hu_moments2[i] = -np.sign(hu_moments2[i]) * np.log10(abs(hu_moments2[i]))
+    
+    # Calculate similarity using normalized L2 distance between Hu moments
+    distance = np.linalg.norm(hu_moments1 - hu_moments2)
+    
+    # Convert distance to similarity score (0 to 1)
+    # Using an exponential decay function: similarity = exp(-distance/scale)
+    # Scale factor of 2.0 chosen empirically - adjust if needed
+    similarity = np.exp(-distance/2.0)
+    
+    return float(similarity)
+
+if 1 == 0:
+    compute_similarity = compute_similarity_ORB
+else:
+    compute_similarity = compute_similarity_simple
+
 def _extract_animal_images_auto_advanced(image: np.ndarray, **_):
     """
     Process an image containing exactly 2 cards with white backgrounds and 8 colored animals each.
@@ -24,7 +145,9 @@ def _extract_animal_images_auto_advanced(image: np.ndarray, **_):
     if image is None or image.size == 0:
         print("Error: Invalid input image")
         return all_outputs
-        
+
+    all_outputs["input"] = image
+
     # Step 1: Enhanced preprocessing for better card detection
     # Convert to grayscale
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -59,7 +182,12 @@ def _extract_animal_images_auto_advanced(image: np.ndarray, **_):
     })
     # Process contours to find cards
     card_contours = []
-    min_card_area = image.shape[0] * image.shape[1] * 0.1  # Cards should be at least 10% of image
+    min_card_area = image.shape[0] * image.shape[1] * 0.05  # Cards should be at least 10% of image
+    
+    # Create debug image for all contours
+    debug_all_contours = image.copy()
+    cv2.drawContours(debug_all_contours, contours, -1, (0, 0, 255), 2)  # Draw all contours in red
+    all_outputs["debug_all_contours"] = debug_all_contours
     
     for cnt in contours:
         area = cv2.contourArea(cnt)
@@ -73,28 +201,45 @@ def _extract_animal_images_auto_advanced(image: np.ndarray, **_):
         # Check if the contour is roughly rectangular (4 corners)
         if len(approx) == 4:
             card_contours.append(cnt)
+            
+        # Add visualization of the approximated contour
+        debug_approx = image.copy()
+        cv2.drawContours(debug_approx, [approx], -1, (255, 0, 0), 2)  # Draw approximated contour in blue
+        all_outputs[f"debug_approx_contour_{len(card_contours)}"] = debug_approx
     
-    # Validation: Must find exactly 2 card contours
-    if len(card_contours) != 2:
-        print(f"Error: Found {len(card_contours)} cards instead of exactly 2")
+    # We need at least 2 card contours
+    if len(card_contours) < 2:
+        print(f"Error: Found {len(card_contours)} cards instead of at least 2")
         return all_outputs
         
-    # Sort contours by area
-    card_contours = sorted(card_contours, key=cv2.contourArea, reverse=True)
+    # If we have more than 2 contours, find the pair with most similar areas
+    # Get areas of all contours
+    areas = [cv2.contourArea(cnt) for cnt in card_contours]
+
+    # Find the pair of contours with the most similar areas
+    min_diff_ratio = float('inf')
+    best_pair = (0, 1)
     
-    # Validate card areas are similar (within 20% of each other)
-    area1 = cv2.contourArea(card_contours[0])
-    area2 = cv2.contourArea(card_contours[1])
-    area_diff_ratio = abs(area1 - area2) / max(area1, area2)
+    for i in range(len(card_contours)):
+        for j in range(i + 1, len(card_contours)):
+            area_diff_ratio = abs(areas[i] - areas[j]) / max(areas[i], areas[j])
+            if area_diff_ratio < min_diff_ratio:
+                min_diff_ratio = area_diff_ratio
+                best_pair = (i, j)
     
-    if area_diff_ratio > 0.2:  # More than 20% difference
+    if min_diff_ratio > 0.2:  # More than 20% difference
         print(f"Error: Card areas differ too much: {area_diff_ratio:.2%}")
         return all_outputs
+    
+    # Keep only the two most similar contours
+    card_contours = [card_contours[best_pair[0]], card_contours[best_pair[1]]]
 
     # Debug image for card detection
     debug_cards = image.copy()
     cv2.drawContours(debug_cards, card_contours, -1, (0, 255, 0), 2)
     all_outputs["debug_card_detection"] = debug_cards
+
+    all_animals = ({}, {})
 
     # Step 3: Process each card separately
     for idx, card_cnt in enumerate(card_contours, 1):
@@ -110,45 +255,149 @@ def _extract_animal_images_auto_advanced(image: np.ndarray, **_):
         card_roi = card_region[y:y+h, x:x+w]
         card_mask_roi = card_mask[y:y+h, x:x+w]
 
-        # Convert to HSV for better color segmentation
-        hsv = cv2.cvtColor(card_roi, cv2.COLOR_BGR2HSV)
+        # Save the extracted card region for debugging
+        all_outputs[f"debug_card_{idx}_region"] = card_roi
+
+        # Convert to grayscale for adaptive thresholding
+        gray_roi = cv2.cvtColor(card_roi, cv2.COLOR_BGR2GRAY)
         
-        # Create a mask for white background (high value in HSV)
-        white_mask = cv2.inRange(hsv, (0, 0, 200), (180, 30, 255))
+        # Apply adaptive thresholding to handle varying lighting conditions
+        block_size = 25  # Must be odd
+        C = 10  # Constant subtracted from mean
+        white_mask = cv2.adaptiveThreshold(
+            gray_roi,
+            255,
+            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+            cv2.THRESH_BINARY,
+            block_size,
+            C
+        )
+        
+        # Save white mask for debugging
+        all_outputs[f"debug_card_{idx}_white_mask"] = white_mask
         
         # Invert to get the animals
         animal_mask = cv2.bitwise_not(white_mask)
         
-        # Clean up the mask
-        kernel = np.ones((5,5), np.uint8)
-        animal_mask = cv2.morphologyEx(animal_mask, cv2.MORPH_OPEN, kernel)
-        animal_mask = cv2.morphologyEx(animal_mask, cv2.MORPH_CLOSE, kernel)
-
-        # Find animal components
+        # Close small gaps in the animal mask using morphological operations
+        small_kernel = np.ones((3,3), np.uint8)  # Smaller kernel for fine details
+        # First close small gaps
+        animal_mask = cv2.morphologyEx(animal_mask, cv2.MORPH_CLOSE, small_kernel, iterations=2)
+        # Save intermediate result after closing small gaps
+        all_outputs[f"debug_card_{idx}_closed_gaps"] = animal_mask
+        
+        # Find initial components before cleanup
         num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
             animal_mask, connectivity=8
         )
         
-        # We expect exactly 8 animals plus background (9 total components)
-        if num_labels != 9:
-            print(f"Error: Found {num_labels-1} animals in card {idx} instead of 8")
-            return all_outputs
-            
-        # Calculate median area to filter noise
-        areas = [stats[i, cv2.CC_STAT_AREA] for i in range(1, num_labels)]
-        median_area = np.median(areas)
-        
-        # Filter components: must be within 40-250% of median area
-        valid_components = []
+        # Create debug visualization of initial components
+        debug_initial = np.zeros((animal_mask.shape[0], animal_mask.shape[1], 3), dtype=np.uint8)
         for i in range(1, num_labels):
-            area = stats[i, cv2.CC_STAT_AREA]
-            if 0.4 * median_area <= area <= 2.5 * median_area:
-                valid_components.append(i)
-                
-        # Validate: must have exactly 8 valid animals
-        if len(valid_components) != 8:
-            print(f"Error: Found {len(valid_components)} valid-sized animals in card {idx} instead of 8")
-            return all_outputs
+            # Random color for each component
+            color = np.random.randint(0, 255, size=3).tolist()
+            debug_initial[labels == i] = color
+        all_outputs[f"debug_card_{idx}_initial_components"] = debug_initial
+        
+        # Process each component to fill holes and calculate solid area
+        filled_components = []
+        card_area = animal_mask.shape[0] * animal_mask.shape[1]
+        min_component_area = 0.001 * card_area  # 5% of card area threshold
+        max_component_area = 0.5 * card_area  # 50% of card area threshold
+        
+        for i in range(1, num_labels):
+            # Create mask for this component
+            component_mask = (labels == i).astype(np.uint8) * 255
+            
+            # Find contours to fill holes
+            contours, _ = cv2.findContours(
+                component_mask, 
+                cv2.RETR_EXTERNAL, 
+                cv2.CHAIN_APPROX_SIMPLE
+            )
+            
+            # Create a mask from convex hull
+            hull_mask = np.zeros_like(component_mask)
+            for contour in contours:
+                # Find convex hull points
+                hull = cv2.convexHull(contour)
+                # Draw filled convex hull
+                cv2.fillPoly(hull_mask, [hull], 255)
+            
+            filled_hull_mask = cv2.bitwise_and(hull_mask, animal_mask)
+            large_kernel = np.ones((10,10), np.uint8)
+            component_mask = cv2.morphologyEx(filled_hull_mask, cv2.MORPH_CLOSE, large_kernel, iterations=2)
+            component_mask = cv2.bitwise_and(hull_mask, component_mask)
+            contours, _ = cv2.findContours(
+                component_mask, 
+                cv2.RETR_EXTERNAL, 
+                cv2.CHAIN_APPROX_SIMPLE
+            )
+
+            filled_mask = np.zeros_like(component_mask)
+            cv2.drawContours(filled_mask, contours, -1, (255), cv2.FILLED)
+            
+            # Calculate solid area after filling
+            solid_area = np.count_nonzero(hull_mask)
+
+            # Only keep components smaller than threshold
+            if solid_area < max_component_area and solid_area > min_component_area:
+                all_outputs[f"debug_card_{idx}.{i}_hull_mask"] = hull_mask
+                filled_components.append((filled_mask, solid_area))
+        
+        # Sort components by area and take top 8
+        filled_components.sort(key=lambda x: x[1], reverse=True)
+        filled_components = filled_components[:8]
+        
+        # Create new animal mask from filled components
+        animal_mask = np.zeros_like(animal_mask)
+        debug_filled = np.zeros((animal_mask.shape[0], animal_mask.shape[1], 3), dtype=np.uint8)
+        
+        for i, (filled_mask, area) in enumerate(filled_components):
+            animal_mask = cv2.bitwise_or(animal_mask, filled_mask)
+            # Add colored visualization of filled components
+            color = np.random.randint(0, 255, size=3).tolist()
+            debug_filled[filled_mask > 0] = color
+            
+        # Save debug visualization of filled components
+        all_outputs[f"debug_card_{idx}_filled_components"] = debug_filled
+        
+        # We already have the filled components from earlier processing
+        # Use the animal_mask we created from filled components
+        all_outputs[f"debug_card_{idx}_animal_mask"] = animal_mask
+        
+        # Store the card region and animal mask for final combination
+        all_animals[idx-1]["card_region"] = (x, y, w, h)
+        all_animals[idx-1]["animal_mask"] = cv2.cvtColor(debug_filled, cv2.COLOR_BGR2GRAY)
+        
+        # Find components on the filled mask - these should already be our 8 animals
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+            animal_mask, connectivity=8
+        )
+        
+        # Create a visualization of the animal mask overlaid on the card
+        animal_overlay = card_roi.copy()
+        animal_overlay[animal_mask > 0] = [0, 255, 0]  # Highlight animals in green
+        all_outputs[f"debug_card_{idx}_animal_overlay"] = animal_overlay
+        
+        # Find animal components on the filled mask
+        num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+            animal_mask, connectivity=8
+        )
+        
+        # Create a colorful visualization of the connected components
+        label_hue = np.uint8(179 * labels / np.max(labels))
+        blank_ch = 255 * np.ones_like(label_hue)
+        labeled_img = cv2.merge([label_hue, blank_ch, blank_ch])
+        labeled_img = cv2.cvtColor(labeled_img, cv2.COLOR_HSV2BGR)
+        labeled_img[label_hue == 0] = 0  # Set background to black
+        all_outputs[f"debug_card_{idx}_components"] = labeled_img
+
+        if num_labels not in range(7, 11):
+            print(f"Skip card {idx} because {num_labels-1} animals detected")
+            continue
+        
+        valid_components = list(range(1, num_labels))                
             
         # Process each valid component (animal)
         for i in valid_components:
@@ -171,6 +420,65 @@ def _extract_animal_images_auto_advanced(image: np.ndarray, **_):
             rgba = cv2.merge([b, g, r, component_mask])
 
             all_outputs[f"animal_{idx}_{i}"] = rgba
+
+            all_animals[idx-1].setdefault("final_animal_mask", []).append({"animal_region": [x_comp+x, y_comp+y, w_comp, h_comp], "animal_img": rgba})
+    
+    if all(all_animals[card_idx-1].get("final_animal_mask", None) is None for card_idx in [1, 2]):
+        print(f"No valid animals found in cards 1 or 2")
+        return all_outputs
+
+    # Create final combined animal mask on the original image
+    final_mask = np.zeros_like(gray)
+    # Create RGBA image with transparency - same size as input image but with alpha channel
+    final_image = cv2.merge([*cv2.split(image), np.zeros_like(gray)])# Start with fully transparent image
+
+    # Combine masks from both cards
+    for card_idx in [1, 2]:
+        if all_animals[card_idx-1]:
+            x, y, w, h = all_animals[card_idx-1]["card_region"]
+            card_mask = all_animals[card_idx-1]["animal_mask"]
+            # Place the card's animal mask in the correct position on the final mask
+            final_mask[y:y+h, x:x+w] = cv2.bitwise_or(
+                final_mask[y:y+h, x:x+w],
+                card_mask
+            )
+
+            # Add each detected animal to the final image
+            for patch in all_animals[card_idx-1].get("final_animal_mask", []):
+                x, y, w, h = patch["animal_region"]
+                animal_img = patch["animal_img"]
+                final_image[y:y+h, x:x+w] = animal_img
+
+    # Add the final results to the outputs
+    all_outputs["final_animal_mask"] = final_mask
+    all_outputs["final_animal_image"] = final_image
+
+    if not all(len(all_animals[card_idx-1].get("final_animal_mask", []))==8 for card_idx in [1, 2]):
+        print(f"Each card must have exactly 8 animals detected.")
+        return all_outputs
+
+    # for each final_animal_mask in the two cards, create a 8x8 matrix to quantily the similarity of the pair of patch.
+    max_smilarity = -float('inf')
+    best_pair = (0, 0)
+    
+    for i, animal_i in enumerate(all_animals[0]["final_animal_mask"]):
+        for j, animal_j in enumerate(all_animals[1]["final_animal_mask"]):
+            if i>j: continue
+
+            similarity = compute_similarity(animal_i["animal_img"], animal_j["animal_img"])
+            if max_smilarity < similarity:
+                max_smilarity = similarity
+                best_pair = (i, j)
+        
+    final_animal_image_with_boxes = image.copy()
+    # overlay the bbox with red on final_image
+    x1, y1, w1, h1 = all_animals[0]["final_animal_mask"][best_pair[0]]["animal_region"]
+    x2, y2, w2, h2 = all_animals[1]["final_animal_mask"][best_pair[1]]["animal_region"]
+    cv2.rectangle(final_animal_image_with_boxes, (x1, y1), (x1 + w1, y1 + h1), (0, 0, 255, 255), 2)
+    cv2.rectangle(final_animal_image_with_boxes, (x2, y2), (x2 + w2, y2 + h2), (0, 0, 255, 255), 2)
+    all_outputs["final_animal_image_with_boxes"] = final_animal_image_with_boxes
+
+    print(f"final detection result {best_pair} - {max_smilarity}: ({x1}, {y1}, {w1}, {h1}, 0, {x2}, {y2}, {w2}, {h2}, 0)")
 
     return all_outputs
 
@@ -429,8 +737,8 @@ def extract_animal_images_auto(image_path, output_dir, min_area=500):
         return
     print(f"Successfully loaded image: {image_path}")
 
-    for k, v in _extract_animal_images_auto(image, min_area=min_area).items():
-        image_path = os.path.join(output_dir, f"{k}.png")
+    for i, (k, v) in enumerate(_extract_animal_images_auto(image, min_area=min_area).items()):
+        image_path = os.path.join(output_dir, f"{i:02d}.{k}.png")
         cv2.imwrite(image_path, v)
         print(f"Saved debug bounding boxes image to: {image_path}")
 
@@ -448,8 +756,8 @@ def process_video(input_path: str, output_path: str):
     fps = int(cap.get(cv2.CAP_PROP_FPS))
     
     # 3. 定义输出视频的尺寸和编码器
-    new_width = 640
-    new_height = 480
+    new_width = 480
+    new_height = 640
     output_size = (new_width, new_height)
     
     # 定义视频编码器，'mp4v' 适用于 .mp4 格式
@@ -471,19 +779,29 @@ def process_video(input_path: str, output_path: str):
 
         images = _extract_animal_images_auto_advanced(frame)
 
-        # if (frame_count % 30 == 0) and (frame_count < 3000):
-        #     for k, v in images.items():
-        #         image_path = str(Path(output_path).with_suffix("")/f"{frame_count:05d}-{k}.png")
-        #         cv2.imwrite(image_path, v)
-        #         print(f"Saved debug bounding boxes image to: {image_path}")
-        #         print(f"Processing frame {frame_count}")
+        if (frame_count % round(fps) == 0) and (frame_count < fps * 60):  # 每秒保存一帧，最多保存前10秒的调试图像
+            for k, v in images.items():
+                if k not in ("input", "debug_all_contours", "final_animal_mask"): continue
+                image_path = str(Path(output_path).with_suffix("")/f"{frame_count:05d}-{k}.png")
+                cv2.imwrite(image_path, v)
+                print(f"Saved debug bounding boxes image to: {image_path}")
+                print(f"Processing frame {frame_count}")
+
+        if "final_animal_image" in images:
+            image_path = str(Path(output_path).with_suffix("")/f"{frame_count:05d}-final_animal_image.png")
+            cv2.imwrite(image_path, images["final_animal_image"])
 
         # 8. 将处理后的帧写入输出文件
-        image = images.get("debug_closed", frame)
+        image = next((images[i] for i in ("final_animal_image_with_boxes", "final_animal_image", "debug_all_contours", "input") if i in images), frame)
+
         # Ensure the image is resized to the output_size before writing
         image_resized = cv2.resize(image, output_size)
-        writer.write(cv2.cvtColor(image_resized, cv2.COLOR_GRAY2RGB))
-        
+        if image_resized.ndim == 2:  # Check if the image is grayscale
+            image_resized = cv2.cvtColor(image_resized, cv2.COLOR_GRAY2BGR)
+        if image_resized.ndim == 4:  # Check if the image is RGBA
+            image_resized = cv2.cvtColor(image_resized, cv2.COLOR_RGBA2BGR)
+        writer.write(image_resized)
+
         frame_count += 1
 
     # 9. 释放资源
@@ -494,11 +812,13 @@ def process_video(input_path: str, output_path: str):
     print(f"视频已保存至: {output_path}")
 
 if __name__ == "__main__":
-    if (Path(__file__).with_name("input.mp4")).exists():
-        process_video(str(Path(__file__).with_name("input.mp4")), str(Path(__file__).with_name("output.mp4")))
-    image_file = Path(__file__).with_name("..")/'../.gemini/IMG_20250720_090212_edit_730440424190105.jpg'
+    image_file = Path(__file__).with_name("..")/'../public/example.jpg'
     output_directory_extract = Path(__file__).with_name('extracted_animals')
     extract_animal_images_auto(image_file, output_directory_extract, min_area=1000)
+
+    if (Path(__file__).with_name("input.mp4")).exists():
+        Path(__file__).with_name("output").mkdir(exist_ok=True)
+        process_video(str(Path(__file__).with_name("input.mp4")), str(Path(__file__).with_name("output.mp4")))
 
     for p in (Path(__file__).with_name("..")/"../debug-logs/").glob("*.json"):
         output_dir = p.with_suffix("")
