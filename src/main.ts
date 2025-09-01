@@ -52,24 +52,22 @@ class Main {
             });
         }
 
-        const switchModelBtn = document.getElementById('switch-model-btn') as HTMLButtonElement;
+        const switchModelBtn = document.getElementById('switch-model') as HTMLButtonElement;
         if (switchModelBtn) {
             switchModelBtn.addEventListener('click', async () => {
                 if (this.activeModelType === 'tfjs') {
                     this.activeModelType = 'onnx';
                     this.currentModel = this.onnxModel;
-                    switchModelBtn.textContent = 'Switch to CV Model';
                 } else if (this.activeModelType === 'onnx') {
                     this.activeModelType = 'cv';
                     this.currentModel = this.cvModel;
-                    switchModelBtn.textContent = 'Switch to TF.js Model';
                 } else {
                     this.activeModelType = 'tfjs';
                     this.currentModel = this.tfjsModel;
-                    switchModelBtn.textContent = 'Switch to ONNX Model';
                 }
                 console.log(`Switching to ${this.activeModelType} model...`);
                 await this.currentModel.load();
+                switchModelBtn.textContent = this.activeModelType;
                 console.log(`${this.activeModelType} model loaded.`);
             });
         }
