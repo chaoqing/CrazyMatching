@@ -6,10 +6,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Crazy Matching</title>
     <script async src="assets/opencv.js" onload="window.dispatchEvent(new Event('opencv-loaded'))"></script>
-    <script type="module" crossorigin src="./assets/index-C6mXYKdl.js"></script>
+    <script type="module" crossorigin src="./assets/index-iTX4d1xp.js"></script>
     <link rel="modulepreload" crossorigin href="./assets/tensorflow-D5Q6Iwqk.js">
     <link rel="modulepreload" crossorigin href="./assets/onnxruntime-COje0n4J.js">
-    <link rel="stylesheet" crossorigin href="./assets/index-1llKqosz.css">
+    <link rel="stylesheet" crossorigin href="./assets/index-ixtfzKcz.css">
   </head>
   <body>
     <video id="video" autoplay playsinline muted></video>
@@ -18,18 +18,48 @@
     <div id="top-controls">
       <h1>Crazy Matching</h1>
       <button id="toggle-algo">Start</button>
+      <button id="switch-model">Switch Model</button>
     </div>
 
-    <div id="left-controls">
-      <input type="range" id="zoom" min="1" max="1" step="0.1" disabled>
-    </div>
+    <div id="controls-wrapper" class="hidden">
+      <div id="left-controls">
+        <input type="range" id="zoom" min="1" max="1" step="0.1" disabled>
+      </div>
 
-    <div id="right-controls">
+      <div id="right-controls">
+      </div>
     </div>
 
     <div id="bottom-container">
       <div id="match-result"></div>
     </div>
     
+    <script>
+      document.addEventListener('DOMContentLoaded', () => {
+        const controlsWrapper = document.getElementById('controls-wrapper');
+        let fadeTimeout;
+
+        function showControls() {
+          if (controlsWrapper) {
+            controlsWrapper.classList.remove('hidden');
+            controlsWrapper.classList.add('visible');
+            clearTimeout(fadeTimeout);
+            fadeTimeout = setTimeout(() => {
+              controlsWrapper.classList.remove('visible');
+              controlsWrapper.classList.add('hidden');
+            }, 5000); // Fade out after 5 seconds
+          }
+        }
+
+        // Show controls on any tap/click
+        document.body.addEventListener('click', showControls);
+        document.body.addEventListener('touchstart', showControls);
+
+        // Initially hide controls
+        if (controlsWrapper) {
+          controlsWrapper.classList.add('hidden');
+        }
+      });
+    </script>
   </body>
 </html>
