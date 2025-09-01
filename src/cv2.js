@@ -1,63 +1,9 @@
 export const DUMP_TENSOR_DATA_AND_SHAPE = true;
 
 function computeSimilarity(image1, image2) {
-    return 1.0
-    // Compute similarity between two RGBA images using Hu Moments.
-    // This method is invariant to translation, rotation, and scale.
-
-    // Convert to grayscale
-    let image1_gray = new cv.Mat();
-    let image2_gray = new cv.Mat();
-
-    if (image1.channels() === 4) { // RGBA
-        cv.cvtColor(image1, image1_gray, cv.COLOR_RGBA2GRAY);
-        cv.cvtColor(image2, image2_gray, cv.COLOR_RGBA2GRAY);
-    } else { // Assume RGB/BGR
-        cv.cvtColor(image1, image1_gray, cv.COLOR_RGB2GRAY);
-        cv.cvtColor(image2, image2_gray, cv.COLOR_RGB2GRAY);
-    }
-
-    // Calculate Hu Moments for both images
-    let moments1 = cv.moments(image1_gray, false);
-    let moments2 = cv.moments(image2_gray, false);
-
-    // Handle empty images or failed moment calculation
-    if (moments1.m00 === 0 || moments2.m00 === 0) {
-        image1_gray.delete();
-        image2_gray.delete();
-        return 0.0;
-    }
-
-    // Calculate Hu Moments
-    let huMoments1 = cv.HuMoments(moments1);
-    let huMoments2 = cv.HuMoments(moments2);
-
-    // Convert to log scale to handle small values better
-    for (let i = 0; i < 7; i++) {
-        if (huMoments1.data64F[i] !== 0) {
-            huMoments1.data64F[i] = -Math.sign(huMoments1.data64F[i]) * Math.log10(Math.abs(huMoments1.data64F[i]));
-        }
-        if (huMoments2.data64F[i] !== 0) {
-            huMoments2.data64F[i] = -Math.sign(huMoments2.data64F[i]) * Math.log10(Math.abs(huMoments2.data64F[i]));
-        }
-    }
-
-    // Calculate similarity using normalized L2 distance between Hu moments
-    let distance = 0;
-    for (let i = 0; i < 7; i++) {
-        distance += Math.pow(huMoments1.data64F[i] - huMoments2.data64F[i], 2);
-    }
-    distance = Math.sqrt(distance);
-
-    // Convert distance to similarity score (0 to 1)
-    let similarity = Math.exp(-distance / 2.0);
-
-    image1_gray.delete();
-    image2_gray.delete();
-    huMoments1.delete();
-    huMoments2.delete();
-
-    return similarity;
+    let mean1 = cv.mean(image1)[0];
+    let mean2 = cv.mean(image2)[0];
+    return 1.0 - Math.abs(mean1 - mean2) / 255.0;
 }
 
 async function cv2_crazy_matching(inputImage) {
@@ -123,8 +69,16 @@ async function cv2_crazy_matching(inputImage) {
             approx.delete();
         }
 
-        if (card_contours.length < 2) {
+        console.log(`Input image size: ${image.cols}x${image.rows} - Found ${card_contours.length} card-like contours`);
+        if (card_contours.length == 0) {
             return null;
+        }
+        if (card_contours.length == 1) {
+            return {
+                card1_bbox: cv.boundingRect(card_contours[0]),
+                card2_bbox: {x: 1, y: 1, width: image.cols-2, height: image.rows-2},
+                patches1: [], patches2: [], best_pair: null, similarity: 0.0
+            };
         }
 
         // Find pair with most similar areas, which should be the two cards
@@ -143,7 +97,11 @@ async function cv2_crazy_matching(inputImage) {
         }
 
         if (min_diff_ratio > 0.2) {
-            return null;
+            return {
+                card1_bbox: cv.boundingRect(card_contours[best_pair[0]]),
+                card2_bbox: cv.boundingRect(card_contours[best_pair[1]]),
+                patches1: [], patches2: [], best_pair: null, similarity: 0.0
+            };
         }
 
         let final_card_contours = [card_contours[best_pair_idx[0]], card_contours[best_pair_idx[1]]];
@@ -151,19 +109,19 @@ async function cv2_crazy_matching(inputImage) {
         card1_bbox = bboxes[0];
         card2_bbox = bboxes[1];
 
-        if (DUMP_TENSOR_DATA_AND_SHAPE) {
-            if (ctx) {
-                ctx.strokeStyle = 'green';
-                ctx.lineWidth = 2;
-                ctx.strokeRect(card1_bbox.x, card1_bbox.y, card1_bbox.width, card1_bbox.height);
-                ctx.strokeRect(card2_bbox.x, card2_bbox.y, card2_bbox.width, card2_bbox.height);
+        // if (DUMP_TENSOR_DATA_AND_SHAPE) {
+        //     if (ctx) {
+        //         ctx.strokeStyle = 'green';
+        //         ctx.lineWidth = 2;
+        //         ctx.strokeRect(card1_bbox.x, card1_bbox.y, card1_bbox.width, card1_bbox.height);
+        //         ctx.strokeRect(card2_bbox.x, card2_bbox.y, card2_bbox.width, card2_bbox.height);
 
-                ctx.fillStyle = 'red';
-                ctx.font = '12px Arial';
-                ctx.fillText(`Card1`, card1_bbox.x, card1_bbox.y - 5);
-                ctx.fillText(`Card2`, card2_bbox.x, card2_bbox.y - 5);
-            }
-        }
+        //         ctx.fillStyle = 'red';
+        //         ctx.font = '12px Arial';
+        //         ctx.fillText(`Card1`, card1_bbox.x, card1_bbox.y - 5);
+        //         ctx.fillText(`Card2`, card2_bbox.x, card2_bbox.y - 5);
+        //     }
+        // }
 
         // Process each card
         let all_patches = [[], []];
@@ -276,7 +234,7 @@ async function cv2_crazy_matching(inputImage) {
             let stats_final = new cv.Mat();
             let centroids_final = new cv.Mat();
             let num_labels_final = cv.connectedComponentsWithStats(animal_mask, labels_final, stats_final, centroids_final, 8, cv.CV_32S);
-            console.log(`Card ${card_idx + 1}: Found ${num_labels_final - 1} patches`);
+            // console.log(`Card ${card_idx + 1}: Found ${num_labels_final - 1} patches`);
 
             for (let i = 1; i < num_labels_final; ++i) {
                 let x_comp = stats_final.data32S[i * cv.CC_STAT_MAX + cv.CC_STAT_LEFT];
@@ -289,45 +247,34 @@ async function cv2_crazy_matching(inputImage) {
                 component_mask_full.convertTo(component_mask_full, cv.CV_8U, 255);
 
                 let component_roi_rect = new cv.Rect(x_comp, y_comp, w_comp, h_comp);
-                let component_roi = card_roi.roi(component_roi_rect);
                 let component_mask = component_mask_full.roi(component_roi_rect);
+                let white_mask_roi = white_mask.roi(component_roi_rect);
 
-                let channels = new cv.MatVector();
-                cv.split(component_roi, channels);
-                let b = channels.get(0);
-                let g = channels.get(1);
-                let r = channels.get(2);
-                channels.delete();
-
-                let rgba_channels = new cv.MatVector();
-                rgba_channels.push_back(b);
-                rgba_channels.push_back(g);
-                rgba_channels.push_back(r);
-                rgba_channels.push_back(component_mask);
-
-                let rgba = new cv.Mat();
-                cv.merge(rgba_channels, rgba);
-                rgba_channels.delete();
+                // Create the final white mask by combining the white mask and inverted component mask
+                let inverted_component_mask = new cv.Mat();
+                cv.bitwise_not(component_mask, inverted_component_mask);
+                let final_white_mask = new cv.Mat();
+                cv.bitwise_or(white_mask_roi, inverted_component_mask, final_white_mask);
+                inverted_component_mask.delete();
 
                 let abs_bbox = { x: x + x_comp, y: y + y_comp, width: w_comp, height: h_comp };
-                all_patches[card_idx].push({ bbox: abs_bbox, img: rgba, mask: component_mask.clone() }); // Clone mask for storage
+                all_patches[card_idx].push({ bbox: abs_bbox, img: final_white_mask.clone(), mask: component_mask.clone() }); // Clone both masks for storage
+                final_white_mask.delete();
 
-                if (DUMP_TENSOR_DATA_AND_SHAPE && import.meta.env.DEV) {
-                    if (ctx) {
-                        ctx.strokeStyle = 'orange';
-                        ctx.lineWidth = 2;
-                        ctx.strokeRect(abs_bbox.x, abs_bbox.y, abs_bbox.width, abs_bbox.height);
+                // if (DUMP_TENSOR_DATA_AND_SHAPE && import.meta.env.DEV) {
+                //     if (ctx) {
+                //         ctx.strokeStyle = 'orange';
+                //         ctx.lineWidth = 2;
+                //         ctx.strokeRect(abs_bbox.x, abs_bbox.y, abs_bbox.width, abs_bbox.height);
 
-                        ctx.fillStyle = 'red';
-                        ctx.font = '12px Arial';
-                        ctx.fillText(`Patch ${card_idx}.${i}`, abs_bbox.x, abs_bbox.y);
-                    }
-                }
+                //         ctx.fillStyle = 'red';
+                //         ctx.font = '12px Arial';
+                //         ctx.fillText(`Patch ${card_idx}.${i}`, abs_bbox.x, abs_bbox.y);
+                //     }
+                // }
 
-                b.delete(); g.delete(); r.delete();
                 component_mask_full.delete();
-                component_roi.delete();
-                component_mask.delete();
+                white_mask_roi.delete();
             }
             labels_final.delete();
             stats_final.delete();
@@ -363,6 +310,7 @@ async function cv2_crazy_matching(inputImage) {
                 let p1 = patches1[i];
                 let p2 = patches2[j];
                 let similarity = computeSimilarity(p1.img, p2.img);
+                // console.log(`Similarity between Patch 1.${i} and Patch 2.${j}: ${similarity.toFixed(4)}`);
                 if (similarity > max_similarity) {
                     max_similarity = similarity;
                     best_pair = [i, j];
@@ -422,7 +370,40 @@ export async function cv2_detect(input, minArea) {
     }
     // console.log(`Input image size: ${src.cols}x${src.rows}`);
 
-    let result = await cv2_crazy_matching(src);
+    const width = src.cols;
+    const height = src.rows;
+    let js_result = await cv2_crazy_matching(src);
+    let result = {
+        raw: [],
+        success: false,
+        allBboxes: [],
+    }
+    if (js_result !== null) {
+        console.log("js result:", js_result);
+        result.allBboxes = [
+            js_result.card1_bbox,
+            js_result.card2_bbox,
+            ...js_result.patches1.map(p => p.bbox),
+            ...js_result.patches2.map(p => p.bbox)
+        ].map(b => ({
+            cx: b.x / width + b.width / width / 2,
+            cy: b.y / height + b.height / height / 2,
+            w: b.width / width,
+            h: b.height / height,
+            r: 0.,
+        }));
+
+        if (js_result.best_pair !== null) {
+            console.log(`Best matching pair with similarity ${js_result.similarity.toFixed(4)}`);
+            let best_patch1 = js_result.patches1[js_result.best_pair[0]].bbox;
+            let best_patch2 = js_result.patches2[js_result.best_pair[1]].bbox;
+            result.raw = [
+                best_patch1.x / width, best_patch1.y / height, best_patch1.width / width, best_patch1.height / height, 0.0,
+                best_patch2.x / width, best_patch2.y / height, best_patch2.width / width, best_patch2.height / height, 0.0];
+            result.success = true;
+        }
+    };
+
     src.delete();
-    return result;
+    return [result];
 }

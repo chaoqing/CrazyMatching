@@ -17,6 +17,13 @@ def compute_similarity(image1: np.ndarray, image2: np.ndarray) -> float:
     Returns:
         float: Similarity score between 0 and 1, where 1 means identical
     """
+    # Handle mask images
+    if len(image1.shape) == 2:
+        gray_i = image1.mean()
+        gray_j = image2.mean()
+        similarity = 1.- np.fabs(gray_i - gray_j)
+        return float(similarity)
+
     # Convert to grayscale
     if image1.shape[-1] == 4:  # RGBA
         image1_gray = cv2.cvtColor(image1, cv2.COLOR_RGBA2GRAY)
@@ -169,12 +176,10 @@ def find_similar_patches(image: np.ndarray):
             w_comp = stats[i, cv2.CC_STAT_WIDTH]
             h_comp = stats[i, cv2.CC_STAT_HEIGHT]
             component_mask_full = (labels == i).astype(np.uint8) * 255
-            component_roi = card_roi[y_comp:y_comp + h_comp, x_comp:x_comp + w_comp]
             component_mask = component_mask_full[y_comp:y_comp + h_comp, x_comp:x_comp + w_comp]
-            b, g, r = cv2.split(component_roi)
-            rgba = cv2.merge([b, g, r, component_mask])
+            white_mask_roi = cv2.bitwise_or(white_mask[y_comp:y_comp+h_comp, x_comp:x_comp+w_comp], cv2.bitwise_not(component_mask))
             abs_bbox = (x + x_comp, y + y_comp, w_comp, h_comp)
-            patches[card_idx].append({'bbox': abs_bbox, 'img': rgba, 'mask': component_mask})
+            patches[card_idx].append({'bbox': abs_bbox, 'img': white_mask_roi, 'mask': component_mask})
 
     if not patches[0] or not patches[1]:
         return card1_bbox, card2_bbox, patches[0], patches[1], None, 0.0

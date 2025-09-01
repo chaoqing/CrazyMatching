@@ -369,6 +369,7 @@ def _extract_animal_images_auto_advanced(image: np.ndarray, **_):
         # Store the card region and animal mask for final combination
         all_animals[idx-1]["card_region"] = (x, y, w, h)
         all_animals[idx-1]["animal_mask"] = cv2.cvtColor(debug_filled, cv2.COLOR_BGR2GRAY)
+        all_animals[idx-1]["white_mask"] = white_mask
         
         # Find components on the filled mask - these should already be our 8 animals
         num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
@@ -414,14 +415,16 @@ def _extract_animal_images_auto_advanced(image: np.ndarray, **_):
             # Extract the component
             component_roi = card_roi[y_comp:y_comp+h_comp, x_comp:x_comp+w_comp]
             component_mask = component_mask[y_comp:y_comp+h_comp, x_comp:x_comp+w_comp]
+            white_mask_roi = cv2.bitwise_or(white_mask[y_comp:y_comp+h_comp, x_comp:x_comp+w_comp], cv2.bitwise_not(component_mask))
 
             # Create RGBA image with transparency
             b, g, r = cv2.split(component_roi)
             rgba = cv2.merge([b, g, r, component_mask])
 
             all_outputs[f"animal_{idx}_{i}"] = rgba
+            all_outputs[f"animal_{idx}_{i}_w"] = cv2.cvtColor(white_mask_roi, cv2.COLOR_GRAY2BGR)
 
-            all_animals[idx-1].setdefault("final_animal_mask", []).append({"animal_region": [x_comp+x, y_comp+y, w_comp, h_comp], "animal_img": rgba})
+            all_animals[idx-1].setdefault("final_animal_mask", []).append({"animal_region": [x_comp+x, y_comp+y, w_comp, h_comp], "animal_img": rgba, "white_mask_roi": white_mask_roi})
     
     if all(all_animals[card_idx-1].get("final_animal_mask", None) is None for card_idx in [1, 2]):
         print(f"No valid animals found in cards 1 or 2")
@@ -466,6 +469,7 @@ def _extract_animal_images_auto_advanced(image: np.ndarray, **_):
             if i>j: continue
 
             similarity = compute_similarity(animal_i["animal_img"], animal_j["animal_img"])
+            # similarity = compute_similarity(cv2.cvtColor(animal_i["white_mask_roi"], cv2.COLOR_GRAY2BGR), cv2.cvtColor(animal_j["white_mask_roi"], cv2.COLOR_GRAY2BGR))
             if max_smilarity < similarity:
                 max_smilarity = similarity
                 best_pair = (i, j)

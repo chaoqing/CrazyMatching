@@ -1,16 +1,16 @@
 if (import.meta.env.DEV) {
-  import('eruda').then((eruda) => {
-    eruda.default.init({
-        useShadowDom: true,
-        autoScale: true,
-        defaults: {
-            displaySize: 100,
-            transparency: 0.95,
-            theme: 'Monokai Pro'
-        }
+    import('eruda').then((eruda) => {
+        eruda.default.init({
+            useShadowDom: true,
+            autoScale: true,
+            defaults: {
+                displaySize: 100,
+                transparency: 0.95,
+                theme: 'Monokai Pro'
+            }
+        });
+        eruda.default.show();
     });
-    eruda.default.show();
-  });
 }
 
 import './style.css';
@@ -35,7 +35,7 @@ class Main {
         this.onnxModel = new SSDModel();
         this.cvModel = new CVModel();
         this.currentModel = this.activeModelType === 'tfjs' ? this.tfjsModel : (this.activeModelType === "cv" ? this.cvModel : this.onnxModel);
-        
+
         const toggleBtn = document.getElementById('toggle-algo') as HTMLButtonElement;
         if (toggleBtn) {
             toggleBtn.addEventListener('click', () => {
@@ -138,9 +138,9 @@ class Main {
             cameraSelector.appendChild(button);
         });
         cameraSelector.style.display = 'flex';
-        
+
         const currentDeviceId = this.currentStream?.getVideoTracks()[0].getSettings().deviceId;
-        if(currentDeviceId) {
+        if (currentDeviceId) {
             this.updateActiveButton(currentDeviceId);
         }
     }
@@ -150,8 +150,8 @@ class Main {
             this.currentStream.getTracks().forEach(track => track.stop());
         }
 
-        const videoConstraints: MediaTrackConstraints = deviceId 
-            ? { deviceId: { exact: deviceId } } 
+        const videoConstraints: MediaTrackConstraints = deviceId
+            ? { deviceId: { exact: deviceId } }
             : { facingMode: 'environment' };
 
         try {
@@ -166,7 +166,7 @@ class Main {
 
             this.canvas.width = this.video.videoWidth;
             this.canvas.height = this.video.videoHeight;
-            
+
             const currentDeviceId = this.currentStream.getVideoTracks()[0].getSettings().deviceId;
             if (currentDeviceId) {
                 this.updateActiveButton(currentDeviceId);
@@ -216,18 +216,20 @@ class Main {
         if (!ctx) return;
 
         if (Array.isArray(predictions) && predictions.length > 0) {
-            ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-            const scaleX = this.canvas.clientWidth;
-            const scaleY = this.canvas.clientHeight;
+            const scaleX = this.canvas.width;
+            const scaleY = this.canvas.height;
 
             // Plot all bboxes with dashed lines
             if (predictions[0].allBboxes && predictions[0].allBboxes.length > 0) {
+                ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
                 predictions[0].allBboxes.forEach(bbox => {
                     drawRotatedRect(ctx, bbox.cx * scaleX, bbox.cy * scaleY, bbox.w * scaleX, bbox.h * scaleY, bbox.r, '#FFFF00', true);
                 });
             }
 
             if (predictions[0].success && Array.isArray(predictions[0].raw) && predictions[0].raw.length === 10) {
+                console.log('Predictions:', predictions);
+
                 const [cx1, cy1, w1, h1, r1, cx2, cy2, w2, h2, r2] = predictions[0].raw;
                 drawRotatedRect(ctx, cx1 * scaleX, cy1 * scaleY, w1 * scaleX, h1 * scaleY, r1, '#00FFFF');
                 ctx.fillText('1', cx1 * scaleX, cy1 * scaleY);
@@ -235,7 +237,7 @@ class Main {
                 ctx.fillText('2', cx2 * scaleX, cy2 * scaleY);
             }
         }
-        
+
         requestAnimationFrame(() => this.detect());
     }
 }
@@ -254,6 +256,6 @@ function drawRotatedRect(ctx: CanvasRenderingContext2D, cx: number, cy: number, 
     } else {
         ctx.setLineDash([]);
     }
-    ctx.strokeRect(-w/2, -h/2, w, h);
+    ctx.strokeRect(-w / 2, -h / 2, w, h);
     ctx.restore();
 }
